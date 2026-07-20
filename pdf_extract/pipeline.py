@@ -149,6 +149,27 @@ def process_document(
                 if id(block) not in all_removed_ids:
                     kept_ids.add(id(block))
 
+        # Summarize per-page block geometry (font-size spread, fragment
+        # count) over the *surviving* blocks only, so the decorative-layout
+        # check reflects what will actually be reassembled, not blocks that
+        # were already stripped as boilerplate/chrome.
+        page_layout_stats: List[confidence.PageLayoutStats] = []
+        for page in doc.pages:
+            surviving = [b for b in page.blocks if id(b) in kept_ids and b.text.strip()]
+            if not surviving:
+                continue
+            avg_sizes = [b.avg_font_size for b in surviving if b.avg_font_size > 0]
+            font_size_ratio = (max(avg_sizes) / min(avg_sizes)) if avg_sizes else 1.0
+            avg_chars = sum(len(b.text) for b in surviving) / len(surviving)
+            page_layout_stats.append(
+                confidence.PageLayoutStats(
+                    page_index=page.page_index,
+                    block_count=len(surviving),
+                    avg_chars_per_block=avg_chars,
+                    font_size_ratio=font_size_ratio,
+                )
+            )
+
         final_text = reassemble_text(doc, kept_ids)
         result.final_char_count = len(final_text)
 
@@ -170,6 +191,7 @@ def process_document(
             contributing_pages=contributing_pages,
             override_applied=bool(rule),
             override_mode=override_mode,
+            page_layout_stats=page_layout_stats,
         )
         result.flagged = result.flagged or conf.flagged
         result.flag_reasons.extend(conf.reasons)

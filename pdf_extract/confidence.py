@@ -15,7 +15,7 @@ reasons are recorded.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 # --- Tunable thresholds -----------------------------------------------
 # If the extracted body text has fewer characters per page than this, the
@@ -33,6 +33,29 @@ MAX_REMOVED_FRACTION = 0.55
 # or every page was OCR'd unsuccessfully).
 MIN_CONTRIBUTING_PAGE_FRACTION = 0.5
 
+# --- Decorative-layout detection ---------------------------------------
+# Cover pages, title pages, and acknowledgements sections often mix large
+# stylized headline text with normal body-sized text, or break a headline
+# into many small fragments (one per glyph/word) to achieve a decorative
+# effect. Neither pattern is reliably caught by the boilerplate/chrome
+# heuristics (the text isn't repeated across pages, and it isn't short
+# generic UI chrome) -- but both are detectable from block-level geometry,
+# and both correlate strongly with the "torn words" garbling seen when
+# such a page's blocks are reassembled into reading order. Pages matching
+# either signal are flagged so a human can confirm the output is correct.
+
+# If the ratio between the largest and smallest average font size among a
+# page's blocks exceeds this, the page mixes markedly different text
+# sizes (e.g. a big title next to normal-sized body/byline text).
+MAX_FONT_SIZE_RATIO = 2.2
+
+# A page with at least this many blocks...
+FRAGMENTED_BLOCK_MIN_COUNT = 8
+# ...where the average block is no longer than this many characters...
+FRAGMENTED_BLOCK_MAX_AVG_CHARS = 20
+# ...is considered fragmented into decorative pieces rather than normal
+# paragraphs (which are typically well over 100 characters per block).
+
 
 @dataclass
 class ConfidenceReport:
@@ -42,6 +65,30 @@ class ConfidenceReport:
     def add(self, reason: str) -> None:
         self.flagged = True
         self.reasons.append(reason)
+
+
+@dataclass
+class PageLayoutStats:
+    """Minimal per-page geometry summary used for decorative-layout
+    detection. Built by the pipeline from the blocks that survived
+    boilerplate/chrome removal (not the raw page), so a page's own
+    running-header font size, if any, doesn't skew the ratio."""
+
+    page_index: int
+    block_count: int
+    avg_chars_per_block: float
+    font_size_ratio: float  # max avg_font_size / min avg_font_size across blocks
+
+
+def _is_decorative_layout_page(stats: "PageLayoutStats") -> bool:
+    if stats.font_size_ratio >= MAX_FONT_SIZE_RATIO:
+        return True
+    if (
+        stats.block_count >= FRAGMENTED_BLOCK_MIN_COUNT
+        and stats.avg_chars_per_block <= FRAGMENTED_BLOCK_MAX_AVG_CHARS
+    ):
+        return True
+    return False
 
 
 def evaluate(
@@ -56,6 +103,7 @@ def evaluate(
     override_applied: bool,
     override_mode: str = "",
     error: str = "",
+    page_layout_stats: Optional[List["PageLayoutStats"]] = None,
 ) -> ConfidenceReport:
     report = ConfidenceReport()
 
@@ -114,5 +162,17 @@ def evaluate(
 
     if final_char_count == 0:
         report.add("zero characters extracted")
+
+    if page_layout_stats:
+        decorative_pages = [
+            s.page_index for s in page_layout_stats if _is_decorative_layout_page(s)
+        ]
+        if decorative_pages:
+            report.add(
+                f"possible decorative/cover-page layout on page(s) "
+                f"{[p + 1 for p in decorative_pages]} (large font-size mix or many "
+                f"short fragments) -- reading order may be unreliable here, please "
+                f"spot-check"
+            )
 
     return report

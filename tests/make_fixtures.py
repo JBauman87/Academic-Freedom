@@ -19,6 +19,18 @@ targets, WITHOUT reproducing any actual document content:
   4. report.pdf          - multi-page report with a running header/footer
                           repeated on every page (title + date + page
                           number + org name), similar to the CAUT report.
+  5. decorative_title.pdf - a single decorative cover/title page mixing a
+                          large stylized headline (rendered as several
+                          oversized, tall single-word blocks stacked in
+                          the left margin) with normal-sized subtitle and
+                          author text -- approximating the title-page /
+                          acknowledgements pattern that previously caused
+                          words to be interleaved/torn apart in output.
+  6. two_column_body.pdf - a single page with a genuine two-column body
+                          (no header/footer/sidebar), to confirm clean
+                          side-by-side column text is still reassembled
+                          correctly (left column fully, then right column
+                          fully) rather than being interleaved line-by-line.
 
 These fixtures are intentionally generic/invented text -- they are for
 testing the pipeline's structural heuristics (repetition-by-position,
@@ -249,6 +261,96 @@ def make_report(path: str, num_pages: int = 3) -> None:
     c.save()
 
 
+def make_decorative_title(path: str) -> None:
+    """
+    Reproduces the structural pattern that caused garbled output on real
+    cover/title pages: several large, tall, single-word blocks stacked
+    down the left margin (simulating a stylized drop-cap-style headline),
+    positioned beside normal-sized subtitle/author text that wraps across
+    multiple ordinary-height lines. Before the column-aware reassembly
+    fix, a tall block's vertical center could land in the middle of the
+    shorter blocks next to it, causing words to be sorted out of order.
+    """
+    c = canvas.Canvas(path, pagesize=letter)
+    width, height = letter
+
+    # Large stylized headline "letters", each its own tall block, stacked
+    # down the left margin -- mimicking a decorative title treatment.
+    big_words = ["FAKE", "REPORT", "ON", "A"]
+    y = height - 100
+    for word in big_words:
+        c.setFont("Helvetica-Bold", 36)
+        c.drawString(60, y, word)
+        y -= 55  # tall block spacing, much larger than normal line height
+
+    # Normal-sized subtitle text, positioned to the right, wrapping across
+    # several ordinary-height lines whose combined vertical span overlaps
+    # the tall headline blocks above.
+    c.setFont("Helvetica", 12)
+    subtitle_lines = [
+        "Synthetic Topic For",
+        "Pipeline Testing Purposes",
+        "Only",
+    ]
+    y2 = height - 110
+    for line in subtitle_lines:
+        c.drawString(260, y2, line)
+        y2 -= 16
+
+    # Author block, further down, also normal-sized.
+    c.setFont("Helvetica", 11)
+    author_lines = ["Jane Fakeauthor", "University of Testville"]
+    y3 = height - 320
+    for line in author_lines:
+        c.drawString(60, y3, line)
+        y3 -= 15
+
+    c.showPage()
+    c.save()
+
+
+def make_two_column_body(path: str) -> None:
+    """
+    A single page with a genuine two-column body of ordinary-sized text
+    and no header/footer/sidebar -- used to confirm the column-aware
+    reassembly still produces clean output for a real two-column layout
+    (left column read fully top-to-bottom, then right column), rather
+    than interleaving the two columns line-by-line.
+    """
+    c = canvas.Canvas(path, pagesize=letter)
+    width, height = letter
+
+    left_paragraph = (
+        "This is the left column of a synthetic two column body used to "
+        "validate that the pipeline reassembles genuine side by side "
+        "columns correctly, reading the entire left column before moving "
+        "to the right column, rather than interleaving lines from both "
+        "columns together."
+    )
+    right_paragraph = (
+        "This is the right column of the same synthetic two column body, "
+        "containing entirely different placeholder content so that any "
+        "interleaving with the left column would be immediately obvious "
+        "in the reassembled output text."
+    )
+
+    c.setFont("Helvetica", 11)
+    left_text = c.beginText(72, height - 100)
+    left_text.setLeading(15)
+    for line in _wrap(left_paragraph, 40):
+        left_text.textLine(line)
+    c.drawText(left_text)
+
+    right_text = c.beginText(320, height - 100)
+    right_text.setLeading(15)
+    for line in _wrap(right_paragraph, 40):
+        right_text.textLine(line)
+    c.drawText(right_text)
+
+    c.showPage()
+    c.save()
+
+
 def _wrap(text: str, width: int):
     words = text.split()
     lines = []
@@ -273,6 +375,8 @@ def main() -> None:
     make_news_article(os.path.join(FIXTURES_DIR, "news_article.pdf"))
     make_letter(os.path.join(FIXTURES_DIR, "letter.pdf"))
     make_report(os.path.join(FIXTURES_DIR, "report.pdf"))
+    make_decorative_title(os.path.join(FIXTURES_DIR, "decorative_title.pdf"))
+    make_two_column_body(os.path.join(FIXTURES_DIR, "two_column_body.pdf"))
     print(f"Wrote fixtures to {FIXTURES_DIR}")
 
 

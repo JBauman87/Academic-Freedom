@@ -123,6 +123,47 @@ class TestReport:
         assert "3" not in lines
 
 
+class TestTwoColumnBody:
+    def test_left_column_read_before_right_column(self, tmp_path):
+        # This is the core regression test for the column-aware reassembly
+        # fix: a genuine two-column layout must be read fully down the
+        # left column before moving to the right column, not interleaved
+        # line-by-line (which would scramble the two independent
+        # paragraphs together).
+        _, text = _run(tmp_path, "two_column_body.pdf")
+        left_pos = text.find("left column of a synthetic")
+        right_pos = text.find("right column of the same")
+        assert left_pos != -1
+        assert right_pos != -1
+        assert left_pos < right_pos
+
+        left_end = text.find("columns together.")
+        assert left_end != -1
+        assert left_end < right_pos
+
+    def test_not_flagged(self, tmp_path):
+        result, _ = _run(tmp_path, "two_column_body.pdf")
+        assert not result.flagged, result.flag_reasons
+
+
+class TestDecorativeTitlePage:
+    def test_words_within_each_block_are_not_torn_apart(self, tmp_path):
+        # Before the fix, a tall block's blocks could be sorted into the
+        # middle of shorter neighboring blocks, splitting single words or
+        # interleaving unrelated fragments together. Each source block's
+        # own text should always survive intact and contiguous.
+        _, text = _run(tmp_path, "decorative_title.pdf")
+        assert "Synthetic Topic For\nPipeline Testing Purposes\nOnly" in text
+        assert "Jane Fakeauthor\nUniversity of Testville" in text
+        for word in ["FAKE", "REPORT", "ON", "A"]:
+            assert word in text
+
+    def test_flagged_as_decorative_layout(self, tmp_path):
+        result, _ = _run(tmp_path, "decorative_title.pdf")
+        assert result.flagged
+        assert any("decorative" in r for r in result.flag_reasons)
+
+
 class TestOverrides:
     def test_skip_mode_flags_without_writing_output(self, tmp_path):
         overrides = OverrideConfig(rules=[])
