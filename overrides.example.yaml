@@ -1,0 +1,30 @@
+# Example overrides config for exceptional documents.
+#
+# Copy this file (e.g. to overrides.yaml), edit the `match` values to match
+# your actual filenames, and pass it to the pipeline with:
+#
+#   python extract.py --input ./input_pdfs --output ./output_text \
+#       --overrides overrides.yaml
+#
+# `match` supports exact filenames or glob patterns (e.g. "transcript-*.pdf").
+# Every document NOT listed here runs through the fully-automatic pipeline.
+
+overrides:
+  # Only extract specific (1-indexed) pages of a document -- e.g. a report
+  # where only an executive summary and a findings section matter.
+  - match: "example-report-with-appendix.pdf"
+    mode: pages
+    pages: [1, 2, 3]
+
+  # Only extract the text between two headings, e.g. a ruling where only
+  # the "DISPOSITION" section onward is relevant. Omit end_heading to
+  # extract through the end of the document.
+  - match: "example-ruling-disposition-only.pdf"
+    mode: heading_range
+    start_heading: "DISPOSITION"
+
+  # Skip automatic extraction entirely and flag for fully manual handling
+  # (e.g. a document with irregular/unparseable formatting).
+  - match: "example-scanned-transcript.pdf"
+    mode: skip
+    reason: "Handwritten annotations throughout; needs manual transcription"

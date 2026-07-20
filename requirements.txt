@@ -1,0 +1,17 @@
+# Core PDF parsing (layout-aware text + bounding boxes)
+pymupdf>=1.23
+
+# Overrides config format
+pyyaml>=6.0
+
+# Optional OCR fallback for scanned pages (requires the `tesseract` binary
+# to also be installed on your system -- see README.md "OCR support").
+pytesseract>=0.3.10
+pillow>=10.0
+
+# Testing
+pytest>=7.4
+
+# Only needed to (re)generate the synthetic PDF fixtures used by the test
+# suite; not required to run the pipeline itself.
+reportlab>=4.0
