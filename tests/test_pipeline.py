@@ -147,21 +147,71 @@ class TestTwoColumnBody:
 
 
 class TestDecorativeTitlePage:
-    def test_words_within_each_block_are_not_torn_apart(self, tmp_path):
-        # Before the fix, a tall block's blocks could be sorted into the
-        # middle of shorter neighboring blocks, splitting single words or
-        # interleaving unrelated fragments together. Each source block's
-        # own text should always survive intact and contiguous.
-        _, text = _run(tmp_path, "decorative_title.pdf")
-        assert "Synthetic Topic For\nPipeline Testing Purposes\nOnly" in text
-        assert "Jane Fakeauthor\nUniversity of Testville" in text
-        for word in ["FAKE", "REPORT", "ON", "A"]:
-            assert word in text
-
-    def test_flagged_as_decorative_layout(self, tmp_path):
-        result, _ = _run(tmp_path, "decorative_title.pdf")
+    def test_excluded_from_main_output_and_flagged(self, tmp_path):
+        # A small, purely decorative page (title/crest-style content) is
+        # automatically excluded from the main output rather than left in
+        # a garbled state -- for a downstream embedding/topic-modeling
+        # pipeline, dropping noise is strictly better than including
+        # scrambled fragments of it.
+        result, text = _run(tmp_path, "decorative_title.pdf")
+        assert text == ""
         assert result.flagged
-        assert any("decorative" in r for r in result.flag_reasons)
+        assert any("automatically excluded" in r for r in result.flag_reasons)
+        assert result.auto_excluded_pages == [0]
+
+    def test_original_text_preserved_in_sidecar_file(self, tmp_path):
+        # Nothing is silently discarded: the original block text for an
+        # excluded page must be fully recoverable from the sidecar file.
+        result, _ = _run(tmp_path, "decorative_title.pdf")
+        assert result.excluded_output_path is not None
+        with open(result.excluded_output_path, encoding="utf-8") as f:
+            excluded_text = f.read()
+        assert "Synthetic Topic For\nPipeline Testing Purposes\nOnly" in excluded_text
+        assert "Jane Fakeauthor\nUniversity of Testville" in excluded_text
+        for word in ["FAKE", "REPORT", "ON", "A"]:
+            assert word in excluded_text
+
+
+class TestDecorativeLayoutSafetyCap:
+    def test_large_decorative_looking_page_is_flagged_not_excluded(self, tmp_path):
+        # A page that matches a decorative-layout signature (e.g. many
+        # short blocks) but carries substantially more text than the
+        # auto-exclusion safety threshold must be flagged for a human to
+        # check, never silently dropped -- excluding real content by
+        # mistake would be far worse than leaving a false-positive flag.
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        path = os.path.join(str(tmp_path), "large_fragmented.pdf")
+        c = canvas.Canvas(path, pagesize=letter)
+        width, height = letter
+        # Start well below the top-of-page nav-strip zone (columns.py
+        # treats short blocks hugging the very top of the page as likely
+        # masthead/nav chrome, which is unrelated to what this test is
+        # checking).
+        y = height - 60
+        # Many separate, short blocks (<=20 chars each, so this matches
+        # the "many short fragments" decorative-layout signature) whose
+        # combined text nonetheless exceeds the auto-exclusion safety cap
+        # (confidence.MAX_CHARS_FOR_AUTO_EXCLUDE, 600 chars): ~60 blocks
+        # x ~13 chars each = ~690 chars total, comfortably over the cap.
+        for i in range(60):
+            c.setFont("Helvetica", 9)
+            c.drawString(72, y, f"Item {i:02d} text.")
+            y -= 14
+        c.showPage()
+        c.save()
+
+        result = process_document(path, str(tmp_path), OverrideConfig(rules=[]))
+        assert result.success
+        assert result.auto_excluded_pages == []
+        with open(result.output_path, encoding="utf-8") as f:
+            text = f.read()
+        assert "Item 00" in text
+        assert "text." in text
+        assert any(
+            "was NOT auto-excluded" in r for r in result.flag_reasons
+        ), result.flag_reasons
 
 
 class TestOverrides:

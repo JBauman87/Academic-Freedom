@@ -18,6 +18,7 @@ from .pipeline import DocumentResult
 REPORT_FIELDNAMES = [
     "source_file",
     "output_file",
+    "excluded_output_file",
     "success",
     "page_count",
     "final_char_count",
@@ -25,6 +26,10 @@ REPORT_FIELDNAMES = [
     "flag_reasons",
     "override_mode",
     "ocr_pages_used",
+    "auto_excluded_pages",
+    "urls_removed",
+    "emails_removed",
+    "separator_lines_removed",
     "error",
 ]
 
@@ -38,6 +43,7 @@ def write_report(results: List[DocumentResult], report_path: str) -> None:
                 {
                     "source_file": r.source_path,
                     "output_file": r.output_path or "",
+                    "excluded_output_file": r.excluded_output_path or "",
                     "success": r.success,
                     "page_count": r.page_count,
                     "final_char_count": r.final_char_count,
@@ -45,6 +51,12 @@ def write_report(results: List[DocumentResult], report_path: str) -> None:
                     "flag_reasons": " | ".join(r.flag_reasons),
                     "override_mode": r.override_mode,
                     "ocr_pages_used": ",".join(str(p + 1) for p in r.ocr_pages_used),
+                    "auto_excluded_pages": ",".join(
+                        str(p + 1) for p in r.auto_excluded_pages
+                    ),
+                    "urls_removed": r.urls_removed,
+                    "emails_removed": r.emails_removed,
+                    "separator_lines_removed": r.separator_lines_removed,
                     "error": r.error,
                 }
             )

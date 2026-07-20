@@ -55,19 +55,50 @@ and uses that position information to distinguish real content from noise:
    config lets you tell the pipeline, per-file, to only extract certain
    pages, only extract text between two headings, or skip a file entirely
    for fully manual handling.
-7. **Confidence flagging** (`pdf_extract/confidence.py`) — every document is
+7. **Auto-exclusion of unrecoverable decorative pages** (`pdf_extract/confidence.py`,
+   wired through `pdf_extract/pipeline.py`) — a page whose surviving blocks
+   show a large font-size mix or many very short fragments (the geometric
+   signature of a title page, university crest/seal, or imprint block) is
+   automatically removed from the main output **if and only if** the total
+   text at stake is small (≤ 600 characters by default). This is the
+   right behavior for two reasons: such pages are rarely part of a
+   document's substantive content anyway, and some decorative layouts
+   (e.g. curved/circular text around a seal graphic) have no reading order
+   that can be reconstructed at all, so attempting to "fix" them just
+   produces confidently-wrong scrambled text -- worse for a downstream
+   embedding pipeline than simply not including it. Nothing is ever
+   silently lost: excluded pages' original text is written to a
+   `<name>.excluded.txt` sidecar file next to the main output, and the
+   exclusion is recorded in `report.csv`. A page matching the same
+   decorative signature but carrying *more* text than the safety threshold
+   is flagged for manual review instead of being excluded, since at that
+   point there's real content that shouldn't be dropped without a human
+   look. Use `--keep-decorative-pages` to disable auto-exclusion entirely
+   (pages will be flagged but left in the main output instead).
+8. **Text-level artifact cleanup** (`pdf_extract/artifacts.py`) — applied to
+   the final reassembled text, after layout-based cleanup:
+   - **URLs** (`http://`, `https://`, and bare `www.` links, including ones
+     word-wrapped across a line break at a hyphen, e.g.
+     `...statement-academic-\nfreedom.`) are removed.
+   - **E-mail addresses** are removed.
+   - **Decorative separator lines** (rows of repeated dashes/underscores/em
+     dashes used as visual dividers, e.g. above a footnote block) are
+     removed.
+
+   This exists specifically because the extracted text is meant to feed a
+   downstream word-embedding/topic-modeling pipeline (e.g. BERTopic), where
+   URLs and e-mail addresses are high-entropy noise tokens that inflate
+   vocabulary without contributing any topical signal. Trailing sentence
+   punctuation glued to a removed URL (e.g. the closing "." in
+   "...malaise/.") is preserved. Each cleanup is independently toggleable
+   via CLI flags (`--keep-urls`, `--keep-emails`, `--keep-separator-lines`)
+   if you'd rather keep any of these for a different downstream use.
+9. **Confidence flagging** (`pdf_extract/confidence.py`) — every document is
    checked for low text yield, unusually high boilerplate removal, failed
-   OCR, processing errors, or a page whose block geometry suggests a
-   decorative/cover-page layout (large mixes of font sizes, or many very
-   short text fragments — typical of title pages, imprint blocks, and
-   acknowledgements sections), and flagged with a reason if something looks
-   off. This lets you triage a batch of hundreds of documents by looking at
-   the flagged ones rather than spot-checking everything. Note that
-   decorative front-matter pages (title pages, copyright/imprint blocks,
-   acknowledgements) are typically not part of a document's substantive
-   content anyway — if you don't want them in the output at all, the
-   `heading_range` override (below) is often the cleanest way to skip
-   straight to where the real content starts.
+   OCR, processing errors, or a decorative-layout page that couldn't be
+   safely auto-excluded, and flagged with a reason if something looks off.
+   This lets you triage a batch of hundreds of documents by looking at the
+   flagged ones rather than spot-checking everything.
 
 Every document is processed independently inside its own try/except, so one
 corrupt or encrypted PDF can't halt a batch run — it's recorded as a failure
@@ -112,11 +143,30 @@ document with:
 |---|---|
 | `success` | `False` if the file errored out entirely (corrupt/encrypted PDF, etc.) |
 | `flagged` | `True` if this document should be reviewed manually |
-| `flag_reasons` | why it was flagged (low text yield, high boilerplate removal, OCR needed/failed, heading not found, decorative/cover-page layout, etc.) |
+| `flag_reasons` | why it was flagged (low text yield, high boilerplate removal, OCR needed/failed, heading not found, decorative/cover-page layout excluded or needing review, etc.) |
 | `ocr_pages_used` | 1-indexed pages that required OCR fallback |
+| `auto_excluded_pages` | 1-indexed pages automatically dropped as decorative layout (see sidecar file) |
+| `excluded_output_file` | path to the `<name>.excluded.txt` sidecar file, if any pages were auto-excluded |
+| `urls_removed` / `emails_removed` / `separator_lines_removed` | counts of each artifact type stripped from this document |
 
 Filter to `flagged == True` (or `success == False`) to get your manual
-review queue instead of spot-checking the whole batch.
+review queue instead of spot-checking the whole batch. If `excluded_output_file`
+is non-empty, that document had content moved to a sidecar file -- open it
+if you want to confirm nothing substantive was dropped.
+
+### CLI flags for artifact cleanup and decorative-page handling
+
+All of the following default to the recommended behavior for feeding a
+downstream embedding/topic-modeling pipeline; pass the flag to opt back
+into the old/raw behavior for a given run:
+
+```bash
+python extract.py --input ./input_pdfs --output ./output_text \
+    --keep-urls              `# don't strip http(s)/www links` \
+    --keep-emails            `# don't strip e-mail addresses` \
+    --keep-separator-lines   `# don't strip dash/underscore divider lines` \
+    --keep-decorative-pages  `# don't auto-exclude small decorative pages`
+```
 
 ### Handling exceptional documents
 
@@ -140,6 +190,29 @@ glob pattern):
 Documents not listed in the overrides file run through the fully-automatic
 pipeline as normal. See `overrides.example.yaml` for the exact syntax.
 
+## Feedback loop: reviewing real problem documents with Kiro
+
+Chat attachments have size/count limits, and pasted text loses the
+original PDF's layout information that's often needed to actually diagnose
+an issue (as happened with the decorative title-page garbling this project
+started from). The `samples/` folder in this repository exists to work
+around that:
+
+1. Add a small number of problem PDFs to `samples/input/`.
+2. Run `python extract.py --input samples/input --output samples/output`.
+3. Commit and push the PDF(s), the generated `.txt` / `.excluded.txt`
+   files, and `samples/output/report.csv`.
+4. Point Kiro at the branch/commit. Kiro can read the input PDF and the
+   output `.txt` side by side directly from the repository -- no
+   attachment limits, no lossy copy/paste, and the exact PDF that produced
+   a given `.txt` is always available for comparison.
+5. Kiro diagnoses the issue against the real file, fixes the pipeline
+   code, regenerates output, and pushes the fix back for review.
+
+See `samples/README.md` for more detail. This folder is for curated QA
+samples only -- keep your actual production batch of several hundred
+documents in your own local (gitignored) input/output directories.
+
 ## Testing
 
 The test suite runs against small synthetic PDF fixtures (generated with
@@ -147,10 +220,13 @@ The test suite runs against small synthetic PDF fixtures (generated with
 this tool targets — a repeated running header/watermark, a printed web
 article with a nav bar and sidebar, a letter with a letterhead column, a
 multi-page report with a running header/footer, a genuine two-column body
-(to check columns are read fully in order, not interleaved), and a
-decorative title page mixing oversized headline blocks with normal-sized
-text (to check reassembly doesn't tear words apart, and that the page gets
-flagged for manual review).
+(to check columns are read fully in order, not interleaved), a decorative
+title page mixing oversized headline blocks with normal-sized text (to
+check it's auto-excluded and preserved in a sidecar file rather than left
+garbled), a larger fragmented-but-substantive page (to check the safety
+cap prevents auto-exclusion of real content), and text-level checks for
+URL/e-mail/separator-line cleanup including a URL wrapped across a line
+break.
 
 ```bash
 pip install -r requirements.txt
@@ -158,7 +234,7 @@ python tests/make_fixtures.py   # regenerate fixtures if needed
 python -m pytest tests/ -v
 ```
 
-## Known limitations
+## Known limitations / artifacts not yet auto-cleaned
 
 - **Single-page layouts with a non-repeating sidebar** (e.g. a short letter
   with a narrow letterhead column that isn't stripped because it isn't
@@ -168,6 +244,20 @@ python -m pytest tests/ -v
   from the main body rather than interleaving it, but it isn't removed.
   Body text is always preserved; the letterhead is just included in the
   output alongside it.
+- **Inline footnote markers glued to words** (e.g. "...academic
+  freedom.5" where "5" is a superscript footnote number with no space
+  before it in the extracted text) are *not* automatically stripped. This
+  is a deliberate choice, not an oversight: reliably distinguishing "a
+  footnote marker" from "a number that's actually part of the sentence"
+  (a year, a section number, a dollar figure) from plain text alone is
+  error-prone, and for a topic-modeling pipeline a single stray digit
+  fused to a word is far less damaging than a heuristic that
+  occasionally mangles real numeric content. If this turns out to matter
+  for your BERTopic results in practice, the safest fix is a
+  post-processing step scoped to your actual footnote-numbering
+  convention (see `overrides.yaml`, or ask for a dedicated
+  `footnotes.py` heuristic if you want one tuned to a specific pattern
+  you're seeing across the batch).
 - **OCR quality** depends entirely on `tesseract` and scan quality; this
   path is a fallback, not the primary focus, per the stated assumption
   that documents are exported/printed.
@@ -177,3 +267,10 @@ python -m pytest tests/ -v
   recurring piece of chrome that isn't being caught, it's better handled
   via an `overrides.yaml` rule (or a small addition to that list) than by
   guessing.
+- The auto-exclusion safety threshold
+  (`confidence.MAX_CHARS_FOR_AUTO_EXCLUDE`, default 600 characters) is a
+  single global constant. If your batch includes unusually dense
+  decorative pages that legitimately exceed this while still being pure
+  noise, or conversely if you'd rather be more conservative, this is a
+  one-line change -- flag it and we can tune it or make it configurable
+  per-run.

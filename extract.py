@@ -58,6 +58,32 @@ def main(argv=None) -> int:
         help="Path to write the CSV summary report to. Defaults to "
         "<output>/report.csv.",
     )
+    parser.add_argument(
+        "--keep-urls",
+        action="store_true",
+        help="Do not strip URLs (http/https/www links) from the output text. "
+        "By default URLs are removed, since they add noise tokens for "
+        "downstream embedding/topic-modeling pipelines.",
+    )
+    parser.add_argument(
+        "--keep-emails",
+        action="store_true",
+        help="Do not strip e-mail addresses from the output text.",
+    )
+    parser.add_argument(
+        "--keep-separator-lines",
+        action="store_true",
+        help="Do not strip decorative separator lines (rows of repeated "
+        "dashes/underscores used as visual dividers, e.g. above footnotes).",
+    )
+    parser.add_argument(
+        "--keep-decorative-pages",
+        action="store_true",
+        help="Do not automatically exclude small decorative/cover-page "
+        "layouts (title pages, crests, imprint blocks) from output -- keep "
+        "them in the main .txt file (flagged) instead of moving them to a "
+        "<name>.excluded.txt sidecar file.",
+    )
     args = parser.parse_args(argv)
 
     if not os.path.isdir(args.input):
@@ -84,7 +110,15 @@ def main(argv=None) -> int:
     results = []
     for i, pdf_path in enumerate(pdf_paths, start=1):
         print(f"[{i}/{len(pdf_paths)}] {pdf_path}")
-        result = process_document(pdf_path, args.output, overrides)
+        result = process_document(
+            pdf_path,
+            args.output,
+            overrides,
+            remove_urls=not args.keep_urls,
+            remove_emails=not args.keep_emails,
+            remove_separator_lines=not args.keep_separator_lines,
+            auto_exclude_decorative_pages=not args.keep_decorative_pages,
+        )
         results.append(result)
         if not result.success:
             print(f"    FAILED: {result.error}")

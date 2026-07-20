@@ -56,6 +56,16 @@ FRAGMENTED_BLOCK_MAX_AVG_CHARS = 20
 # ...is considered fragmented into decorative pieces rather than normal
 # paragraphs (which are typically well over 100 characters per block).
 
+# Safety cap for automatic exclusion (see pipeline.py): a page is only
+# ever *auto-excluded* from output (as opposed to merely flagged) if its
+# surviving text totals no more than this many characters. Genuine
+# decorative pages (a title, a crest/seal rendered as scattered text
+# fragments, an imprint block) are almost always well under this. A page
+# with substantially more text that happens to also match one of the
+# decorative signals (e.g. a numbered list of short findings) is flagged
+# for a human to check, but its content is never silently dropped.
+MAX_CHARS_FOR_AUTO_EXCLUDE = 600
+
 
 @dataclass
 class ConfidenceReport:
@@ -77,10 +87,14 @@ class PageLayoutStats:
     page_index: int
     block_count: int
     avg_chars_per_block: float
+    total_chars: int
     font_size_ratio: float  # max avg_font_size / min avg_font_size across blocks
 
 
-def _is_decorative_layout_page(stats: "PageLayoutStats") -> bool:
+def is_decorative_layout_page(stats: "PageLayoutStats") -> bool:
+    """True if this page's surviving blocks match one of the geometric
+    signatures of a decorative layout (large font-size mix, or many very
+    short fragments) -- see module docstring for detail and rationale."""
     if stats.font_size_ratio >= MAX_FONT_SIZE_RATIO:
         return True
     if (
@@ -89,6 +103,19 @@ def _is_decorative_layout_page(stats: "PageLayoutStats") -> bool:
     ):
         return True
     return False
+
+
+def is_safe_to_auto_exclude(stats: "PageLayoutStats") -> bool:
+    """True if a decorative-flagged page is also small enough in total
+    surviving text that automatically excluding it from output is safe --
+    i.e. there isn't enough real content at risk for a false positive to
+    matter. See MAX_CHARS_FOR_AUTO_EXCLUDE."""
+    return stats.total_chars <= MAX_CHARS_FOR_AUTO_EXCLUDE
+
+
+# Retained for backwards compatibility with any external callers/tests
+# written against the previous private name.
+_is_decorative_layout_page = is_decorative_layout_page
 
 
 def evaluate(
@@ -104,6 +131,7 @@ def evaluate(
     override_mode: str = "",
     error: str = "",
     page_layout_stats: Optional[List["PageLayoutStats"]] = None,
+    auto_excluded_page_count: int = 0,
 ) -> ConfidenceReport:
     report = ConfidenceReport()
 
@@ -119,7 +147,24 @@ def evaluate(
         report.add("marked as manual-only by override config")
         return report
 
-    chars_per_page = final_char_count / page_count if page_count else 0
+    # Pages that were automatically excluded as decorative layout (see
+    # below) are intentionally content-free in the main output -- that's
+    # by design, not a defect. Excluding them from the "effective" page
+    # count for the yield/coverage checks below avoids a cascade of
+    # redundant "low yield" / "zero chars" flags that would just restate
+    # the same fact the decorative-layout message already explains.
+    effective_page_count = page_count - auto_excluded_page_count
+
+    if effective_page_count <= 0 and auto_excluded_page_count > 0:
+        report.add(
+            f"entire document ({page_count} page(s)) was automatically "
+            f"excluded as decorative layout -- no substantive content was "
+            f"extracted; original text was saved to the .excluded.txt "
+            f"sidecar file for review"
+        )
+        return report
+
+    chars_per_page = final_char_count / effective_page_count if effective_page_count else 0
     if chars_per_page < MIN_CHARS_PER_PAGE:
         report.add(
             f"low text yield: {chars_per_page:.0f} chars/page "
@@ -148,11 +193,13 @@ def evaluate(
                 f"(pages {[p + 1 for p in ocr_succeeded_pages]}) -- please spot-check"
             )
 
-    contributing_fraction = contributing_pages / page_count if page_count else 0
+    contributing_fraction = (
+        contributing_pages / effective_page_count if effective_page_count else 0
+    )
     if contributing_fraction < MIN_CONTRIBUTING_PAGE_FRACTION:
         report.add(
-            f"only {contributing_pages}/{page_count} pages contributed any "
-            f"surviving text"
+            f"only {contributing_pages}/{effective_page_count} non-excluded "
+            f"page(s) contributed any surviving text"
         )
 
     if override_applied and override_mode == "heading_range":
@@ -165,14 +212,30 @@ def evaluate(
 
     if page_layout_stats:
         decorative_pages = [
-            s.page_index for s in page_layout_stats if _is_decorative_layout_page(s)
+            s.page_index for s in page_layout_stats if is_decorative_layout_page(s)
         ]
         if decorative_pages:
-            report.add(
-                f"possible decorative/cover-page layout on page(s) "
-                f"{[p + 1 for p in decorative_pages]} (large font-size mix or many "
-                f"short fragments) -- reading order may be unreliable here, please "
-                f"spot-check"
-            )
+            excluded = [
+                s.page_index
+                for s in page_layout_stats
+                if is_decorative_layout_page(s) and is_safe_to_auto_exclude(s)
+            ]
+            kept_but_flagged = [p for p in decorative_pages if p not in excluded]
+            if excluded:
+                report.add(
+                    f"decorative/cover-page layout detected and automatically "
+                    f"excluded from output on page(s) {[p + 1 for p in excluded]} "
+                    f"(large font-size mix or many short fragments, low text "
+                    f"volume) -- full original text for these pages was saved "
+                    f"to the .excluded.txt sidecar file; please review"
+                )
+            if kept_but_flagged:
+                report.add(
+                    f"possible decorative layout on page(s) "
+                    f"{[p + 1 for p in kept_but_flagged]} was NOT auto-excluded "
+                    f"because it contains more text than the safety threshold "
+                    f"allows -- reading order may still be unreliable here, "
+                    f"please spot-check"
+                )
 
     return report
