@@ -1,1 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
 
+# Virtual environments
+.venv/
+venv/
+
+# Pipeline input/output -- these are the user's actual documents and
+# extraction results, not project source. Keep the repo focused on the
+# tool itself; documents are provided/generated locally per-run.
+input_pdfs/*
+!input_pdfs/.gitkeep
+output_text/*
+!output_text/.gitkeep
+
+# OS/editor cruft
+.DS_Store
