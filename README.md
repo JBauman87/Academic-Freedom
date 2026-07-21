@@ -31,6 +31,26 @@ and uses that position information to distinguish real content from noise:
    list, and stripped. This heuristic is deliberately conservative — it
    only ever removes *short* blocks, so a real paragraph can never be
    deleted just because it mentions one of these words.
+
+   The main-column/sidebar geometry estimate was refined after finding a
+   real failure case via the feedback loop (see below): on a *sparse*
+   page with no unambiguously long body paragraph (e.g. just a short
+   headline and caption), ranking blocks purely by character length let
+   short sidebar teaser fragments corrupt the estimate, silently
+   disabling sidebar removal on that page. The estimator now requires
+   blocks to be genuinely long (≥80 characters) before trusting them as
+   body-text evidence, and falls back to a left-margin-clustering
+   heuristic — preferring the leftmost multi-block cluster, matching how
+   a primary reading column is conventionally positioned versus a
+   sidebar/rail to its right — when a page has too few long blocks.
+
+   A separate horizontal nav-row heuristic also detects a row of several
+   short blocks (e.g. "Home", "News", "Opinion") spanning a wide portion
+   of the page width, regardless of the specific section names used (a
+   publication's own labels won't be in the generic phrase list). Blocks
+   are clustered by overlapping vertical extent (so a two-line wrapped
+   nav item like "Arts &\nCulture" is grouped correctly with its
+   single-line neighbors) rather than a fixed position tolerance.
 4. **Reassembly** (`pdf_extract/reassemble.py`) — surviving blocks are
    joined back into clean paragraphs in reading order. Order is determined
    per page using a simplified recursive "XY-cut": the page is split at any
@@ -75,16 +95,28 @@ and uses that position information to distinguish real content from noise:
    look. Use `--keep-decorative-pages` to disable auto-exclusion entirely
    (pages will be flagged but left in the main output instead).
 
-   The detection signal itself was recalibrated after validating against a
-   batch of 21 real documents (see "Feedback loop" below): the original
-   version used a single whole-page max/min font-size ratio, which
-   produced false positives on completely ordinary pages -- any page with
-   one section heading above a paragraph and a footnote block naturally
-   has a large size ratio (one big heading vs. small footnote text) but is
-   not remotely decorative. The signal now specifically counts *multiple*
-   blocks that are both large relative to the page's dominant body-text
-   size AND short -- which is what an actual fragmented decorative title
-   looks like, and what a single normal heading does not.
+   The detection signal itself was recalibrated twice after validating
+   against real documents via the feedback loop (see below):
+   - The original version used a single whole-page max/min font-size
+     ratio, which produced false positives on completely ordinary pages
+     -- any page with one section heading above a paragraph and a
+     footnote block naturally has a large size ratio (one big heading vs.
+     small footnote text) but is not remotely decorative. The signal now
+     specifically counts *multiple* blocks that are both large relative
+     to the page's dominant body-text size AND short -- which is what an
+     actual fragmented decorative title looks like, and what a single
+     normal heading does not.
+   - A page made up mostly of website chrome (e.g. a "Related Bulletins"
+     teaser list, a footer link list) can include one or two longer
+     headline/caption blocks that pull the page's *average* block length
+     just above the fragmentation threshold, even though most of the
+     page's blocks are still short chrome fragments. A second signal now
+     also flags a page where a large majority (≥65%) of blocks are short,
+     even if the average alone wouldn't trigger. This threshold was
+     chosen by comparing real chrome-heavy pages (which had ≥69% short
+     blocks) against every genuine content page in a real 43-document
+     batch, including dense historical reports with many short
+     footnote-style blocks (all of which stayed under 50%).
 8. **Text-level artifact cleanup** (`pdf_extract/artifacts.py`) — applied to
    the final reassembled text, after layout-based cleanup:
    - **URLs** (`http://`, `https://`, and bare `www.` links, including ones
@@ -237,14 +269,27 @@ See `samples/README.md` for more detail. This folder is for curated QA
 samples only -- keep your actual production batch of several hundred
 documents in your own local (gitignored) input/output directories.
 
-As of this writing, `samples/` contains a real 21-document batch (news
-articles, letters, and a report, all concerning the same real-world
-academic freedom case) that was used to recalibrate the decorative-layout
-detection and fix a URL-removal edge case -- both found by comparing real
-input PDFs against their real output `.txt` files, which is a much more
-reliable calibration signal than synthetic fixtures alone. If you add more
-real documents here over time, it's worth periodically re-running the
-full batch and skimming `report.csv` for newly-flagged documents.
+This loop has been run twice so far, each time against a larger and more
+varied real batch (most recently 43 documents spanning news articles,
+letters, NGO correspondence, CAUT investigative reports, university
+website printouts, Wikipedia article printouts, and long-form academic
+journal articles). Each round found and fixed real issues that synthetic
+fixtures alone hadn't surfaced -- most notably a website-chrome page
+(nav bar + footer + newsletter signup) that leaked almost entirely into
+main output uncaught, and a sparse news page whose real headline/caption
+was too short to reliably distinguish from a sidebar teaser list under
+the original column-estimation logic. Both are now covered by dedicated
+synthetic regression fixtures (see "Testing" below) so they can't
+silently regress.
+
+Per-repository convention: after each review round, `samples/input/` and
+`samples/output/` are cleared back to empty (aside from `.gitkeep`) before
+pushing, so the repository doesn't accumulate every batch of test
+documents indefinitely. The lessons learned are captured in the code
+itself (heuristics, thresholds, comments) and in this README, not by
+keeping the documents around. If you want to re-run a similar review
+later, add a fresh batch of PDFs to `samples/input/` following the same
+workflow.
 
 ## Testing
 
@@ -257,7 +302,9 @@ multi-page report with a running header/footer, a genuine two-column body
 title page mixing oversized headline blocks with normal-sized text (to
 check it's auto-excluded and preserved in a sidecar file rather than left
 garbled), a larger fragmented-but-substantive page (to check the safety
-cap prevents auto-exclusion of real content), and text-level checks for
+cap prevents auto-exclusion of real content), a sparse headline-plus-
+sidebar page and a mostly-chrome nav/footer page (both reproducing real
+bugs found via the feedback loop -- see above), and text-level checks for
 URL/e-mail/separator-line cleanup including a URL wrapped across a line
 break.
 
@@ -308,3 +355,17 @@ python -m pytest tests/ -v
   still being pure noise, or conversely if you'd rather be more
   conservative, this is a one-line change -- flag it and we can tune it
   or make it configurable per-run.
+- A very minor cosmetic residual: when a URL/e-mail was embedded inside a
+  parenthetical whose closing paren sits on a following line after the
+  link (e.g. `"...see our website at \nwww.example.com.) \n..."`), the
+  closing `")"` can be lost along with the URL, leaving `"...see our \n..."`
+  with an unmatched opening parenthesis earlier in the sentence. This
+  doesn't corrupt any real words (a stray punctuation mark is inert for a
+  topic-modeling pipeline) and is left as-is rather than adding a more
+  invasive text-rewriting rule for a purely cosmetic issue.
+- A very small number of real documents include Wikipedia-style inline
+  citation markers (e.g. `[1]`, `[2]: 45–49`) copied along with quoted
+  Wikipedia article text. These are left untouched for the same reason
+  footnote markers are (see above) -- a generic bracket-stripping rule
+  risks deleting a real editorial insertion like `[sic]` that happens to
+  share the same bracket syntax.

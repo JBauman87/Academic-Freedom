@@ -80,6 +80,19 @@ FRAGMENTED_BLOCK_MAX_AVG_CHARS = 20
 # paragraphs (which are typically well over 100 characters per block).
 # This signal alone already catches title pages where the whole title AND
 # byline/date/author block are all broken into many small pieces.
+#
+# A second, complementary signal catches web-page chrome that the AVERAGE
+# check above can miss: a page made up mostly of short nav/list/footer
+# items (e.g. a "Related Bulletins" teaser list, a footer link list) can
+# include one or two longer headline/caption blocks that pull the average
+# block length just above FRAGMENTED_BLOCK_MAX_AVG_CHARS even though the
+# large majority of blocks are still short chrome fragments. Validated
+# against a real 43-document corpus (including several dense historical
+# reports with many short footnote-style blocks, which stay well under
+# this fraction): pages of genuine chrome had >=69% of blocks at or below
+# the short-block character threshold, while every genuine content page
+# in the corpus stayed under 50%.
+FRAGMENTED_BLOCK_SHORT_FRACTION = 0.65
 
 # Safety cap for automatic exclusion (see pipeline.py): a page is only
 # ever *auto-excluded* from output (as opposed to merely flagged) if its
@@ -133,18 +146,26 @@ class PageLayoutStats:
     total_chars: int
     font_size_ratio: float  # max avg_font_size / min avg_font_size across blocks (kept for diagnostics)
     large_short_block_count: int = 0
+    short_block_fraction: float = 0.0  # fraction of blocks <= FRAGMENTED_BLOCK_MAX_AVG_CHARS chars
 
 
 def is_decorative_layout_page(stats: "PageLayoutStats") -> bool:
     """True if this page's surviving blocks match one of the geometric
     signatures of a decorative layout (multiple oversized-and-short
-    blocks, or many very short fragments overall) -- see module docstring
-    for detail and rationale."""
+    blocks, many very short fragments on average, or a large majority of
+    short chrome-like fragments even if one or two longer headline/caption
+    blocks are also present) -- see module docstring for detail and
+    rationale."""
     if stats.large_short_block_count >= MIN_LARGE_SHORT_BLOCKS:
         return True
     if (
         stats.block_count >= FRAGMENTED_BLOCK_MIN_COUNT
         and stats.avg_chars_per_block <= FRAGMENTED_BLOCK_MAX_AVG_CHARS
+    ):
+        return True
+    if (
+        stats.block_count >= FRAGMENTED_BLOCK_MIN_COUNT
+        and stats.short_block_fraction >= FRAGMENTED_BLOCK_SHORT_FRACTION
     ):
         return True
     return False
@@ -268,11 +289,12 @@ def evaluate(
             kept_but_flagged = [p for p in decorative_pages if p not in excluded]
             if excluded:
                 report.add(
-                    f"decorative/cover-page layout detected and automatically "
-                    f"excluded from output on page(s) {[p + 1 for p in excluded]} "
-                    f"(large font-size mix or many short fragments, low text "
-                    f"volume) -- full original text for these pages was saved "
-                    f"to the .excluded.txt sidecar file; please review"
+                    f"decorative/cover-page or navigation-chrome layout "
+                    f"detected and automatically excluded from output on "
+                    f"page(s) {[p + 1 for p in excluded]} (large font-size "
+                    f"mix, or mostly short fragments, with low overall text "
+                    f"volume) -- full original text for these pages was "
+                    f"saved to the .excluded.txt sidecar file; please review"
                 )
             if kept_but_flagged:
                 report.add(

@@ -197,6 +197,12 @@ def process_document(
                 if b.avg_font_size >= body_font_size * confidence.LARGE_FONT_MULTIPLIER
                 and len(b.text) <= confidence.LARGE_FONT_SHORT_BLOCK_MAX_CHARS
             )
+            short_count = sum(
+                1
+                for b in surviving
+                if len(b.text) <= confidence.FRAGMENTED_BLOCK_MAX_AVG_CHARS
+            )
+            short_fraction = short_count / len(surviving)
 
             page_layout_stats.append(
                 confidence.PageLayoutStats(
@@ -206,6 +212,7 @@ def process_document(
                     total_chars=total_chars_this_page,
                     font_size_ratio=font_size_ratio,
                     large_short_block_count=large_short_count,
+                    short_block_fraction=short_fraction,
                 )
             )
 

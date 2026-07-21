@@ -31,6 +31,22 @@ targets, WITHOUT reproducing any actual document content:
                           side-by-side column text is still reassembled
                           correctly (left column fully, then right column
                           fully) rather than being interleaved line-by-line.
+  7. sparse_headline_with_sidebar.pdf - a sparse news page (short headline
+                          + caption, no long body paragraphs) beside a
+                          "Related articles" sidebar of short teaser
+                          fragments -- reproduces a real bug where the
+                          main-column estimator, ranking blocks purely by
+                          length, pulled sidebar fragments into its
+                          sample on a page with no unambiguously long
+                          blocks, corrupting the estimate and silently
+                          disabling sidebar removal.
+  8. website_chrome_page.pdf - a page that's almost entirely site chrome:
+                          a horizontal nav bar of short section-name
+                          items (generic site labels, not in any phrase
+                          denylist) plus a footer link list, with only a
+                          couple of short real-content blocks mixed in --
+                          reproduces a real bug where such a page's chrome
+                          leaked into main output uncaught.
 
 These fixtures are intentionally generic/invented text -- they are for
 testing the pipeline's structural heuristics (repetition-by-position,
@@ -351,6 +367,113 @@ def make_two_column_body(path: str) -> None:
     c.save()
 
 
+def make_sparse_headline_with_sidebar(path: str) -> None:
+    """
+    Reproduces a real-world bug found via the samples/ feedback loop: a
+    sparse news page whose only real content is a short headline and
+    caption (neither reaching the pipeline's "unambiguously long body
+    paragraph" length threshold) sitting beside a "Related articles"
+    sidebar made up of several short teaser fragments. The old
+    main-column estimator ranked blocks purely by length ("top 25% by
+    character count"), so on a page with no genuinely long blocks, short
+    sidebar fragments got pulled into that top-25% sample right alongside
+    the real headline/caption -- corrupting the estimated column width
+    all the way across the page and silently disabling sidebar detection
+    entirely. The fix estimates the main column from blocks that are
+    unambiguously long, and falls back to left-margin clustering when
+    there aren't enough of those.
+    """
+    c = canvas.Canvas(path, pagesize=letter)
+    width, height = letter
+
+    # Real content: a short caption and a wrapped headline, both well
+    # under what any single sidebar item alone would be, but each
+    # individually still longer than any one sidebar fragment.
+    c.setFont("Helvetica", 9)
+    c.drawString(40, height - 260, "A photo caption describing the article's lead image in one line.")
+    c.setFont("Helvetica-Bold", 20)
+    for i, line in enumerate(["Sparse Headline That", "Barely Wraps To Two Lines"]):
+        c.drawString(40, height - 300 - i * 24, line)
+
+    # Sidebar: several short teaser items positioned to the right,
+    # collectively spanning most of the page width when combined with the
+    # real content's left margin -- exactly the pattern that fooled the
+    # old length-ranked estimator.
+    sidebar_x = width - 160
+    c.setFont("Helvetica", 10)
+    teaser_items = [
+        "1. Unrelated teaser",
+        "headline fragment",
+        "one goes here",
+        "2. Second unrelated",
+        "teaser headline",
+        "fragment here too",
+        "3. Third teaser",
+        "fragment for good",
+        "measure as well",
+    ]
+    y = height - 210
+    for item in teaser_items:
+        c.drawString(sidebar_x, y, item)
+        y -= 16
+
+    c.showPage()
+    c.save()
+
+
+def make_website_chrome_page(path: str) -> None:
+    """
+    Reproduces a second real-world bug found via the samples/ feedback
+    loop: a page that is almost entirely website navigation/footer
+    chrome -- a horizontal nav bar of short section-name items (whose
+    exact wording won't be in any generic phrase denylist, since every
+    publisher's section names differ) plus a footer link list -- with
+    only a couple of short real-content blocks (e.g. a "Back" link and a
+    one-line headline) mixed in. This is the pattern that requires the
+    horizontal nav-row geometry heuristic (columns.py) and the
+    short-block-fraction decorative-layout signal (confidence.py) working
+    together: the nav row is stripped by geometry, and the surrounding
+    mostly-chrome page is still recognized as low-value enough to flag
+    (or auto-exclude, if small enough) even though it isn't literally a
+    title/cover page.
+    """
+    c = canvas.Canvas(path, pagesize=letter)
+    width, height = letter
+
+    # A horizontal nav bar: many short items sharing a vertical band and
+    # spanning most of the page width -- generic site section names, not
+    # in any phrase denylist. Alternating a small vertical offset between
+    # items forces PyMuPDF to keep them as separate text blocks (matching
+    # how a real browser-rendered nav bar's independent DOM elements are
+    # exported), rather than merging same-baseline drawString calls into
+    # a single block the way reportlab otherwise would.
+    nav_items = ["Home", "Local", "World", "Sports", "Opinion", "Culture", "Podcasts"]
+    nav_y = height - 60
+    x = 40
+    for i, item in enumerate(nav_items):
+        c.setFont("Helvetica", 10)
+        c.drawString(x, nav_y + (i % 2) * 8, item)
+        x += 70
+
+    # A couple of short but genuinely real content blocks.
+    c.setFont("Helvetica", 9)
+    c.drawString(40, height - 100, "Back")
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(40, height - 130, "A short real headline for this fixture page")
+
+    # Footer link list: another batch of short blocks, further down.
+    footer_items = ["About Us", "Careers", "Advertise", "Contact", "Privacy Policy", "Terms"]
+    fy = 80
+    fx = 40
+    for i, item in enumerate(footer_items):
+        c.setFont("Helvetica", 9)
+        c.drawString(fx, fy + (i % 2) * 8, item)
+        fx += 90
+
+    c.showPage()
+    c.save()
+
+
 def _wrap(text: str, width: int):
     words = text.split()
     lines = []
@@ -377,6 +500,10 @@ def main() -> None:
     make_report(os.path.join(FIXTURES_DIR, "report.pdf"))
     make_decorative_title(os.path.join(FIXTURES_DIR, "decorative_title.pdf"))
     make_two_column_body(os.path.join(FIXTURES_DIR, "two_column_body.pdf"))
+    make_sparse_headline_with_sidebar(
+        os.path.join(FIXTURES_DIR, "sparse_headline_with_sidebar.pdf")
+    )
+    make_website_chrome_page(os.path.join(FIXTURES_DIR, "website_chrome_page.pdf"))
     print(f"Wrote fixtures to {FIXTURES_DIR}")
 
 

@@ -214,6 +214,56 @@ class TestDecorativeLayoutSafetyCap:
         ), result.flag_reasons
 
 
+class TestSparseHeadlineWithSidebar:
+    def test_sidebar_teasers_removed(self, tmp_path):
+        # Regression test for a real bug found via the samples/ feedback
+        # loop: on a sparse page with no unambiguously long body block,
+        # the old length-ranked main-column estimator could be corrupted
+        # by short sidebar fragments, silently disabling sidebar removal
+        # entirely. The main column must still be correctly identified as
+        # the left-hand real content, and the right-hand teaser list must
+        # be stripped.
+        _, text = _run(tmp_path, "sparse_headline_with_sidebar.pdf")
+        assert "Unrelated teaser" not in text
+        assert "Second unrelated" not in text
+        assert "Third teaser" not in text
+
+    def test_real_headline_and_caption_preserved(self, tmp_path):
+        _, text = _run(tmp_path, "sparse_headline_with_sidebar.pdf")
+        assert "photo caption describing the article" in text
+        assert "Sparse Headline That" in text
+        assert "Barely Wraps To Two Lines" in text
+
+
+class TestWebsiteChromePage:
+    def test_nav_bar_and_footer_removed(self, tmp_path):
+        # Regression test for a real bug found via the samples/ feedback
+        # loop: a page that is almost entirely site navigation/footer
+        # chrome (generic section names and footer links not present in
+        # any phrase denylist) must have that chrome stripped via the
+        # horizontal nav-row geometry heuristic, leaving only the small
+        # amount of real content.
+        _, text = _run(tmp_path, "website_chrome_page.pdf")
+        for nav_item in ["Home", "Local", "World", "Sports", "Opinion", "Culture", "Podcasts"]:
+            assert nav_item not in text
+        for footer_item in ["About Us", "Careers", "Advertise", "Privacy Policy", "Terms"]:
+            assert footer_item not in text
+
+    def test_real_content_preserved(self, tmp_path):
+        _, text = _run(tmp_path, "website_chrome_page.pdf")
+        assert "Back" in text
+        assert "A short real headline for this fixture page" in text
+
+    def test_flagged_as_low_yield(self, tmp_path):
+        # After stripping nearly all of this page's chrome, only a
+        # couple of words of real content remain -- correctly flagged as
+        # low text yield rather than silently producing a near-empty file
+        # with no explanation.
+        result, _ = _run(tmp_path, "website_chrome_page.pdf")
+        assert result.flagged
+        assert any("low text yield" in r for r in result.flag_reasons)
+
+
 class TestOverrides:
     def test_skip_mode_flags_without_writing_output(self, tmp_path):
         overrides = OverrideConfig(rules=[])
