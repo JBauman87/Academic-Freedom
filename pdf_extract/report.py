@@ -30,6 +30,9 @@ REPORT_FIELDNAMES = [
     "urls_removed",
     "emails_removed",
     "separator_lines_removed",
+    "ligatures_normalized",
+    "icon_glyphs_removed",
+    "html_tags_removed",
     "error",
 ]
 
@@ -57,6 +60,9 @@ def write_report(results: List[DocumentResult], report_path: str) -> None:
                     "urls_removed": r.urls_removed,
                     "emails_removed": r.emails_removed,
                     "separator_lines_removed": r.separator_lines_removed,
+                    "ligatures_normalized": r.ligatures_normalized,
+                    "icon_glyphs_removed": r.icon_glyphs_removed,
+                    "html_tags_removed": r.html_tags_removed,
                     "error": r.error,
                 }
             )

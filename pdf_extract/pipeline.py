@@ -4,19 +4,30 @@ pipeline.py
 Orchestrates the full per-document extraction flow:
 
     1. Check for an override rule (skip / page-restrict / heading-range).
-    2. Extract layout (text blocks + metadata) via layout.py.
+    2. Extract layout (text blocks + metadata) via layout.py, including a
+       per-page reliability check that falls back to word-position-based
+       reconstruction if PyMuPDF's own block/line clustering is detected
+       as unreliable for a given page (see layout.py).
     3. OCR any pages with no text layer (best effort).
     4. Strip cross-page repeated boilerplate via dedupe.py.
-    5. Strip same-page nav/sidebar chrome via columns.py.
-    6. Detect decorative/unrecoverable-layout pages (confidence.py) and,
-       if the amount of text at stake is small enough to be safe, exclude
-       them from the main output -- their original text is preserved in a
+    5. Strip same-page nav/sidebar chrome via columns.py. The nav-row
+       heuristic within this stage is deliberately constrained to blocks
+       with near-uniform, modest font sizes (see columns.py module notes)
+       so it cannot mistake a decorative title page's large, non-uniform
+       fragments for a real navigation bar -- an interaction that was
+       found to hide decorative pages from step 6 below by consuming most
+       of their fragments first.
+    6. Detect decorative/unrecoverable-layout pages (confidence.py) on
+       the blocks that survive steps 4-5 and, if the amount of text at
+       stake is small enough to be safe, exclude them from the main
+       output -- their original text is preserved in a
        ``<name>.excluded.txt`` sidecar file rather than being discarded,
        so nothing is ever silently lost.
     7. Reassemble surviving blocks into reading-order text.
     8. Clean text-level artifacts (URLs, e-mail addresses, decorative
-       separator lines) via artifacts.py -- primarily to avoid injecting
-       noise tokens into downstream embedding/topic-modeling pipelines.
+       separator lines, ligatures) via artifacts.py -- primarily to avoid
+       injecting noise tokens into downstream embedding/topic-modeling
+       pipelines.
     9. Evaluate confidence / flag for manual review via confidence.py.
     10. Write the .txt output (unless mode == skip).
 
@@ -59,6 +70,9 @@ class DocumentResult:
     urls_removed: int = 0
     emails_removed: int = 0
     separator_lines_removed: int = 0
+    ligatures_normalized: int = 0
+    icon_glyphs_removed: int = 0
+    html_tags_removed: int = 0
     auto_excluded_pages: List[int] = field(default_factory=list)
 
 
@@ -70,6 +84,9 @@ def process_document(
     remove_urls: bool = True,
     remove_emails: bool = True,
     remove_separator_lines: bool = True,
+    normalize_ligatures: bool = True,
+    remove_icon_glyphs: bool = True,
+    remove_html_tags: bool = True,
     auto_exclude_decorative_pages: bool = True,
 ) -> DocumentResult:
     filename = os.path.basename(pdf_path)
@@ -144,6 +161,12 @@ def process_document(
         dedupe_result = dedupe.find_repeated_boilerplate(doc)
 
         # --- Strip same-page chrome (nav/sidebar/promo) ---------------
+        # The nav-row heuristic inside strip_page_chrome is constrained to
+        # near-uniform, modest font sizes (see columns.py) specifically so
+        # it cannot consume a decorative title page's large, highly
+        # variable-sized fragments -- avoiding a harmful interaction where
+        # nav-row stripping could eat most of a decorative page's content
+        # before the decorative-layout detector below ever sees it.
         all_removed_ids = set(dedupe_result.removed_block_ids)
         for page in doc.pages:
             remaining_blocks = [b for b in page.blocks if id(b) not in all_removed_ids]
@@ -203,6 +226,7 @@ def process_document(
                 if len(b.text) <= confidence.FRAGMENTED_BLOCK_MAX_AVG_CHARS
             )
             short_fraction = short_count / len(surviving)
+            garbled_count = confidence.count_garbled_text_layer_blocks(surviving)
 
             page_layout_stats.append(
                 confidence.PageLayoutStats(
@@ -213,6 +237,7 @@ def process_document(
                     font_size_ratio=font_size_ratio,
                     large_short_block_count=large_short_count,
                     short_block_fraction=short_fraction,
+                    garbled_text_layer_block_count=garbled_count,
                 )
             )
 
@@ -250,11 +275,17 @@ def process_document(
             remove_urls=remove_urls,
             remove_emails=remove_emails,
             remove_separator_lines=remove_separator_lines,
+            normalize_ligatures=normalize_ligatures,
+            remove_icon_glyphs=remove_icon_glyphs,
+            remove_html_tags=remove_html_tags,
         )
         final_text = cleanup.text
         result.urls_removed = cleanup.urls_removed
         result.emails_removed = cleanup.emails_removed
         result.separator_lines_removed = cleanup.separator_lines_removed
+        result.ligatures_normalized = cleanup.ligatures_normalized
+        result.icon_glyphs_removed = cleanup.icon_glyphs_removed
+        result.html_tags_removed = cleanup.html_tags_removed
 
         result.final_char_count = len(final_text)
 

@@ -48,6 +48,7 @@ import re
 from dataclasses import dataclass
 from typing import List, Set
 
+from . import confidence
 from .layout import PageLayout, TextBlock
 
 # Blocks with this many words or fewer are eligible for the keyword-cue
@@ -81,6 +82,23 @@ TOP_STRIP_MAX_WORDS = 10
 NAV_ROW_MIN_ITEMS = 5
 NAV_ROW_MAX_WORDS = 4
 NAV_ROW_MIN_SPAN_FRAC = 0.5
+
+# Real navigation bars use one (or very nearly one) font size across all
+# their items -- e.g. "Home News Sports" are all rendered in the same nav
+# stylesheet rule. A decorative title/cover page broken into many small
+# fragments, by contrast, typically uses several sharply different font
+# sizes across those fragments (parts of a large stylized headline mixed
+# with smaller subtitle/byline pieces). Requiring near-uniform font size
+# within a candidate row -- and a maximum absolute size, since real nav
+# items are normal UI text size, not large decorative type -- prevents
+# the nav-row heuristic from mistaking a decorative page's fragments for
+# a real navigation bar. This was found necessary after observing the
+# nav-row heuristic consume most of a real title page's fragments (font
+# sizes ranging ~27-46pt) before the decorative-layout detector
+# (confidence.py) got a chance to evaluate the page, hiding it from that
+# detector entirely.
+NAV_ROW_MAX_FONT_SIZE_RATIO = 1.3
+NAV_ROW_MAX_FONT_SIZE = 16.0
 
 # Generic UI/navigation/promo phrases. Matched as a whole-block match (after
 # normalization) or as a standalone leading phrase, not as a substring, to
@@ -154,6 +172,97 @@ def _matches_generic_chrome(text: str) -> bool:
     return False
 
 
+# Fraction of a multi-line block's own lines that must independently match
+# a generic chrome phrase (see _matches_generic_chrome) for the whole
+# block to be treated as chrome. This handles nav bars/footers that a PDF
+# renderer merged into a single multi-line block (e.g. "Local\nWatch\n...
+# \nSign In" as one block) rather than one block per item -- the
+# whole-block phrase match above only catches a block whose ENTIRE
+# (normalized) text equals a denylist phrase, which such a merged block
+# never does, since it also contains non-denylist section names.
+MERGED_CHROME_LINE_MIN_LINES = 3
+MERGED_CHROME_LINE_MATCH_FRACTION = 0.4
+
+
+def _matches_merged_chrome_block(text: str) -> bool:
+    lines = [l for l in text.split("\n") if l.strip()]
+    if len(lines) < MERGED_CHROME_LINE_MIN_LINES:
+        return False
+    matches = sum(1 for l in lines if _matches_generic_chrome(l))
+    return (matches / len(lines)) >= MERGED_CHROME_LINE_MATCH_FRACTION
+
+
+# "Packed short lines" geometric heuristic -- a further fallback for
+# merged nav bars/social-icon rows whose individual items don't even
+# match the generic phrase denylist (e.g. an outlet's own section names
+# like "Local"/"Watch"/"Trade War", which can't be enumerated generically
+# without overfitting to specific publishers).
+#
+# The key structural signal is *vertical packing*: when a PDF renderer
+# lays out several short items side-by-side on what is visually one
+# horizontal row (a nav bar, an icon strip), PyMuPDF's block/line
+# clustering still reports each item as a separate "line" within the
+# block, one after another -- but because they're side-by-side rather
+# than actually stacked, the block's total height is far smaller than
+# what that many lines at that font size would occupy if genuinely
+# stacked. A real multi-line paragraph (or a decorative title's stacked
+# fragments) has a height-per-line roughly equal to its font size
+# (ratio close to 1.0); a merged nav/icon row has a much smaller ratio,
+# since the "lines" are actually side by side, not stacked on top of
+# each other.
+#
+# This alone is not sufficient, though -- some genuinely packed *content*
+# also has small height-per-line ratios, notably table rows/columns in
+# reports (e.g. the Calgary CAUT report's "Date / Item # / Event / ..."
+# appendix tables, where cells are individually short but the table as a
+# whole conveys real substantive information). Those are excluded by
+# additionally requiring every line be very short (<= 4 words -- shorter
+# than even a table cell's citation/quote fragment) and requiring no
+# line contain a digit or a "/" or "#" character, since dates, item
+# numbers, and table markers are exactly what distinguishes genuine
+# tabular report content from nav-bar/icon-strip labels (which are
+# always plain words, e.g. "Home", "News", "Sign In").
+#
+# Verified against the full real-document test corpus (21 PDFs spanning
+# news articles, CAUT/CBC reports, letters, and legal-adjacent
+# documents): this combination fires only on genuine nav bars/social
+# icon strips (CTV's "Local/Watch/Trade War/.../Sign In", The Campus's
+# "Home/News/Opinions/.../Arts & Culture" and "Business & Economics/About
+# Us", CBC's "Menu/Search/Sign In", CAUT's "Join/Français" icon row,
+# "Related Bulletins/View All", and footer link row) plus one
+# icon-glyph-fragment junk block, and never fires on real paragraphs,
+# decorative title-page fragments, letter/address or signature blocks,
+# wrapped two-line headlines, or the Calgary report's tables/garbled-text
+# fragments -- every genuine 2-line block in the corpus has a
+# height-per-line ratio >= 0.95, comfortably above the 0.7 threshold, so
+# requiring only 2 lines (rather than 3) is safe and additionally catches
+# short 2-item merged chrome rows that 3+ would miss.
+PACKED_LINES_MIN_LINES = 2
+PACKED_LINES_MAX_HEIGHT_RATIO = 0.7
+PACKED_LINES_MAX_WORDS_PER_LINE = 4
+PACKED_LINES_MAX_TOTAL_WORDS = 30
+_PACKED_LINE_DISQUALIFY_RE = re.compile(r"[0-9/#]")
+
+
+def _matches_packed_short_lines(block: TextBlock) -> bool:
+    lines = [l.strip() for l in block.text.split("\n") if l.strip()]
+    if len(lines) < PACKED_LINES_MIN_LINES:
+        return False
+    total_words = sum(len(l.split()) for l in lines)
+    if total_words > PACKED_LINES_MAX_TOTAL_WORDS:
+        return False
+    for line in lines:
+        if len(line.split()) > PACKED_LINES_MAX_WORDS_PER_LINE:
+            return False
+        if _PACKED_LINE_DISQUALIFY_RE.search(line):
+            return False
+    font = block.avg_font_size
+    if not font:
+        return False
+    ratio = block.height / (len(lines) * font)
+    return ratio < PACKED_LINES_MAX_HEIGHT_RATIO
+
+
 @dataclass
 class ColumnResult:
     removed_block_ids: Set[int]
@@ -213,7 +322,156 @@ def _find_nav_row_block_ids(blocks: List[TextBlock]) -> Set[int]:
             continue
         x0 = min(b.x0_frac for b in group)
         x1 = max(b.x1_frac for b in group)
-        if x1 - x0 >= NAV_ROW_MIN_SPAN_FRAC:
+        if x1 - x0 < NAV_ROW_MIN_SPAN_FRAC:
+            continue
+
+        # Font-size uniformity/size check (see NAV_ROW_MAX_FONT_SIZE_RATIO
+        # docstring above) -- skip groups that look like decorative
+        # fragments rather than a real nav bar.
+        sizes = [b.avg_font_size for b in group if b.avg_font_size > 0]
+        if sizes:
+            size_ratio = max(sizes) / min(sizes)
+            if size_ratio > NAV_ROW_MAX_FONT_SIZE_RATIO or max(sizes) > NAV_ROW_MAX_FONT_SIZE:
+                continue
+
+        removed.update(id(b) for b in group)
+    return removed
+
+
+# "Card grid" detection: a "related articles" section rendered as several
+# side-by-side teaser cards (as opposed to a single-column vertical list,
+# which the side-rail heuristic already covers) shows up as multiple
+# blocks that occupy roughly the same vertical band (y-extent) but are
+# narrow and non-overlapping horizontally -- e.g. four article teasers
+# arranged in a row of columns near the bottom of a page. This is
+# distinct from a nav row (which is wide, low blocks near the top/below a
+# masthead): a card grid is typically several *narrow* blocks side by
+# side, each internally containing a short multi-line teaser (category
+# label, headline, byline).
+CARD_GRID_MIN_ITEMS = 3
+CARD_GRID_MAX_WIDTH_FRAC = 0.3
+CARD_GRID_Y_OVERLAP_MIN_FRAC = 0.5
+
+# An upper bound on how many narrow blocks a single "card grid" cluster
+# may contain. This was found necessary after discovering a serious false
+# positive on a real report (the Calgary CAUT report) whose appendix
+# letters are laid out with a torn/scattered multi-column text-extraction
+# defect: dozens to over a hundred narrow blocks per page, each a small
+# fragment of a column of running prose, satisfying the same
+# y-overlap/x-non-overlap geometry test as a genuine card grid purely by
+# coincidence of how many narrow columns happen to line up. A real
+# "related articles" teaser row, by contrast, has a small, fixed number
+# of items (3-7 observed across the real corpus, since it mirrors a
+# small number of teaser cards a web page actually displays side by
+# side) -- there is no real-world nav pattern that legitimately produces
+# dozens of side-by-side narrow cards on one page. Capped well above the
+# observed real maximum (7 items, The Campus's "recent posts" row) while
+# still rejecting the pathological 10-to-100+-item clusters seen on the
+# Calgary report (whose smallest false-positive cluster was already 10
+# items).
+CARD_GRID_MAX_ITEMS = 8
+
+# A second, independent safeguard against the same false-positive family:
+# even after capping cluster size, a handful of the Calgary report's
+# torn-column fragments still happened to land in small (4-8 item)
+# clusters that satisfy the geometry test on their own (e.g. an
+# "Appendix D"-style oversized decorative heading broken into vertical
+# letter-strips, and torn two/three-column body-text fragments -- both
+# found via corpus re-scan after the cluster-size cap above). What
+# reliably distinguishes a genuine card-grid page from a torn/decorative
+# page is not the candidate cluster itself but the *page as a whole*: a
+# real page with a card-grid teaser row is still a normal page of
+# mostly-normal-width content, with the teaser row as one relatively
+# small feature (narrow blocks were <= 77% of that page's blocks in
+# every genuine example found in the real corpus). A page suffering the
+# column-tearing defect or covered in decorative fragments, by contrast,
+# is overwhelmingly made of narrow blocks (92-100% in every Calgary
+# false-positive page found). Requiring the *page's* narrow-block
+# fraction to stay below this threshold before card-grid detection is
+# even attempted is a cheap, robust page-level gate that catches these
+# cases regardless of the specific cluster size/width/font-size quirks
+# that happened to let them slip through the other, more targeted guards
+# above.
+CARD_GRID_MAX_PAGE_NARROW_FRACTION = 0.8
+
+
+def _find_card_grid_block_ids(blocks: List[TextBlock]) -> Set[int]:
+    """
+    Detect a horizontal row of narrow "card" blocks (e.g. several
+    "related articles" teasers side by side) that substantially overlap
+    each other's vertical extent but occupy distinct, non-overlapping
+    horizontal ranges. Returns the ids of blocks belonging to such a
+    grid, or an empty set if none is found.
+
+    Blocks matching the garbled-truncated-text-layer signature (see
+    confidence.count_garbled_text_layer_blocks) are excluded from
+    eligibility here. That defect -- narrow vertical-strip blocks each
+    made up of only the first few characters of otherwise-real lines --
+    was found to visually resemble a column of narrow "cards" closely
+    enough to be swept up by this heuristic and silently removed,
+    hiding a genuine PDF text-layer defect from confidence.py's
+    dedicated (and much more important) garbled-text detector, which
+    routes such pages to manual/OCR review rather than letting them be
+    treated as harmless decorative chrome. This must never happen, since
+    a garbled page can carry substantial real content.
+    """
+    narrow = [
+        b
+        for b in blocks
+        if (b.x1_frac - b.x0_frac) <= CARD_GRID_MAX_WIDTH_FRAC
+        and confidence.count_garbled_text_layer_blocks([b]) == 0
+    ]
+    if len(narrow) < CARD_GRID_MIN_ITEMS:
+        return set()
+
+    # Page-level gate (see CARD_GRID_MAX_PAGE_NARROW_FRACTION docstring
+    # above): skip card-grid detection entirely on pages where narrow
+    # blocks dominate, since that pattern belongs to a torn-text-layer
+    # defect or a decorative/fragmented layout, not a real card grid.
+    if blocks and len(narrow) / len(blocks) > CARD_GRID_MAX_PAGE_NARROW_FRACTION:
+        return set()
+
+    n = len(narrow)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[ri] = rj
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = narrow[i], narrow[j]
+            overlap_start = max(a.y0_frac, b.y0_frac)
+            overlap_end = min(a.y1_frac, b.y1_frac)
+            overlap = max(0.0, overlap_end - overlap_start)
+            shorter_height = min(a.y1_frac - a.y0_frac, b.y1_frac - b.y0_frac)
+            if shorter_height > 0 and overlap / shorter_height >= CARD_GRID_Y_OVERLAP_MIN_FRAC:
+                # Also require they don't horizontally overlap much --
+                # side-by-side cards, not a stacked column of items at
+                # the same x position (which is a normal single-column
+                # sidebar list, already handled by the side-rail
+                # heuristic elsewhere).
+                x_overlap_start = max(a.x0_frac, b.x0_frac)
+                x_overlap_end = min(a.x1_frac, b.x1_frac)
+                x_overlap = max(0.0, x_overlap_end - x_overlap_start)
+                shorter_width = min(a.x1_frac - a.x0_frac, b.x1_frac - b.x0_frac)
+                if shorter_width == 0 or x_overlap / shorter_width < 0.5:
+                    union(i, j)
+
+    clusters: dict = {}
+    for i in range(n):
+        clusters.setdefault(find(i), []).append(narrow[i])
+
+    removed: Set[int] = set()
+    for group in clusters.values():
+        if CARD_GRID_MIN_ITEMS <= len(group) <= CARD_GRID_MAX_ITEMS:
             removed.update(id(b) for b in group)
     return removed
 
@@ -314,6 +572,12 @@ def strip_page_chrome(page: PageLayout) -> ColumnResult:
             removed.add(id(block))
             notes.append(f"nav-row: {block.text[:30]!r}")
 
+    card_grid_ids = _find_card_grid_block_ids(blocks)
+    for block in blocks:
+        if id(block) in card_grid_ids and id(block) not in removed:
+            removed.add(id(block))
+            notes.append(f"card-grid: {block.text[:30]!r}")
+
     for block in blocks:
         if id(block) in removed:
             continue
@@ -324,6 +588,28 @@ def strip_page_chrome(page: PageLayout) -> ColumnResult:
         if word_count <= SHORT_BLOCK_WORDS and _matches_generic_chrome(block.text):
             removed.add(id(block))
             notes.append(f"chrome-phrase: {block.text!r}")
+            continue
+
+        # Heuristic 1b: a multi-line block where most individual lines
+        # independently match a generic chrome phrase -- catches a nav
+        # bar/footer merged into a single block by the PDF's own layout
+        # (see _matches_merged_chrome_block docstring above). Only
+        # eligible when the block as a whole is still short in word
+        # count, so a real multi-sentence paragraph can never match.
+        if word_count <= TOP_STRIP_MAX_WORDS * 2 and _matches_merged_chrome_block(
+            block.text
+        ):
+            removed.add(id(block))
+            notes.append(f"merged-chrome-block: {block.text[:40]!r}")
+            continue
+
+        # Heuristic 1c: packed-short-lines geometry (see
+        # _matches_packed_short_lines docstring above) -- catches merged
+        # nav bars/icon strips whose items don't match the generic
+        # phrase denylist at all (outlet-specific section names).
+        if _matches_packed_short_lines(block):
+            removed.add(id(block))
+            notes.append(f"packed-short-lines: {block.text[:40]!r}")
             continue
 
         # Heuristic 2: geometry -- short block sitting well outside (to the

@@ -207,3 +207,84 @@ class TestCombinedCleanup:
         assert result.urls_removed == 1
         assert result.emails_removed == 1
         assert result.separator_lines_removed == 1
+
+
+
+class TestLigatureNormalization:
+    def test_fi_ligature_normalized(self):
+        text = "The professor was \ufb01red after a lengthy investigation."
+        result = clean_artifacts(text)
+        assert "\ufb01" not in result.text
+        assert "fired" in result.text
+        assert result.ligatures_normalized == 1
+
+    def test_multiple_ligatures_in_one_document(self):
+        text = "The \ufb01rst of\ufb01ce visit was brie\ufb02y noted in the of\ufb01cial record."
+        result = clean_artifacts(text)
+        assert result.ligatures_normalized == 4
+        assert "first" in result.text
+        assert "office" in result.text
+        assert "briefly" in result.text
+        assert "official" in result.text
+
+    def test_can_be_disabled(self):
+        text = "He was \ufb01red."
+        result = clean_artifacts(text, normalize_ligatures=False)
+        assert "\ufb01" in result.text
+        assert result.ligatures_normalized == 0
+
+
+class TestIconGlyphRemoval:
+    def test_private_use_area_glyph_removed(self):
+        # Social-share icon fonts commonly land in Unicode's Private Use
+        # Area when extracted as plain text (e.g. \uf060, \uf39e).
+        text = "Share this article \uf060\uf39e\uf0e1 with others."
+        result = clean_artifacts(text)
+        assert "\uf060" not in result.text
+        assert "\uf39e" not in result.text
+        assert "\uf0e1" not in result.text
+        assert result.icon_glyphs_removed == 3
+        assert "Share this article" in result.text
+        assert "with others." in result.text
+
+    def test_can_be_disabled(self):
+        text = "Icons: \uf060\uf39e"
+        result = clean_artifacts(text, remove_icon_glyphs=False)
+        assert "\uf060" in result.text
+        assert result.icon_glyphs_removed == 0
+
+
+class TestHtmlTagRemoval:
+    def test_well_formed_anchor_tag_removed(self):
+        text = 'Download the film from <a href="http://example.com">here</a>.'
+        result = clean_artifacts(text)
+        assert "<a href" not in result.text
+        assert "</a>" not in result.text
+        assert result.html_tags_removed == 2
+
+    def test_malformed_anchor_tag_with_mismatched_quotes_removed(self):
+        # Reproduces the real observed defect: a leaked anchor tag whose
+        # quote characters were mangled by the PDF's own text encoding,
+        # e.g. from a real Canadian Dimension article export.
+        text = (
+            "the film will be available in the near future from "
+            '<a href="\nhttp://www.dwdtv.org/" target=_blank">www.dwdtv.org.'
+        )
+        result = clean_artifacts(text)
+        assert "<a href" not in result.text
+        assert "target=_blank" not in result.text
+        assert "available in the near future from" in result.text
+
+    def test_can_be_disabled(self):
+        text = 'See <a href="http://example.com">this link</a>.'
+        result = clean_artifacts(text, remove_html_tags=False, remove_urls=False)
+        assert "<a href" in result.text
+        assert result.html_tags_removed == 0
+
+    def test_real_comparison_operator_not_mistaken_for_a_tag(self):
+        # A bare "<" used as a mathematical/comparison symbol in body
+        # text must never be treated as the start of an HTML tag.
+        text = "The measured value was found to be x < 5 in every trial."
+        result = clean_artifacts(text)
+        assert result.text == text
+        assert result.html_tags_removed == 0

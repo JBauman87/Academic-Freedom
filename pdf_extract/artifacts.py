@@ -10,6 +10,12 @@ reading-order form, rather than at the block level:
   - E-mail addresses
   - Decorative separator lines (rows of repeated dashes/underscores/em
     dashes used as visual dividers, e.g. above a block of footnotes)
+  - Typographic ligature codepoints (e.g. U+FB01 "ﬁ") normalized back to
+    their constituent letters (e.g. "fi")
+  - Private-use-area / symbol-font glyphs left behind by icon fonts
+    (e.g. social-share icons rendered as text in some web-article PDF
+    exports), which extract as meaningless codepoints with no
+    corresponding real character
 
 This exists specifically to support feeding the extracted text into a
 downstream word-embedding/topic-modeling pipeline (e.g. BERTopic), where
@@ -60,6 +66,64 @@ _SEPARATOR_LINE_RE = re.compile(r"^[\s\-\u2010-\u2015_=]{5,}$")
 # left behind when their entire contents were a URL/e-mail that got
 # removed, e.g. "(see http://example.com)" -> "()".
 _EMPTY_BRACKETS_RE = re.compile(r"[\(\[]\s*[\)\]]")
+
+# Standard Latin typographic ligatures. PDF fonts commonly encode common
+# letter pairs (fi, fl, ff, ffi, ffl) as a single glyph/codepoint for
+# visual kerning reasons; when extracted as text this single codepoint
+# reads as one (unusual, non-ASCII) character rather than the two/three
+# letters it visually represents. Expanding these back to plain letters
+# is a standard, universal (genre- and language-independent within
+# Latin-script text) normalization for any downstream text/NLP use --
+# leaving them as-is would inflate vocabulary with visually-identical-but-
+# distinct tokens (e.g. "ﬁred" vs "fired" would be treated as different
+# words by a topic model).
+_LIGATURE_MAP = {
+    "\ufb00": "ff",
+    "\ufb01": "fi",
+    "\ufb02": "fl",
+    "\ufb03": "ffi",
+    "\ufb04": "ffl",
+    "\ufb05": "st",  # long-s + t ligature, rare but seen in some fonts
+    "\ufb06": "st",
+}
+_LIGATURE_RE = re.compile("[" + "".join(_LIGATURE_MAP.keys()) + "]")
+
+# Icon/symbol-font glyphs (e.g. a site's social-share icon font, star
+# ratings, arrow glyphs) are sometimes embedded as regular text runs in a
+# PDF export, so they get extracted as ordinary text -- but the resulting
+# codepoints are meaningless outside that specific icon font (they render
+# as a Facebook logo, a share arrow, etc. only when displayed with that
+# font; as plain text they're just noise, often landing in Unicode's
+# Private Use Area or in symbol/dingbat ranges). These are stripped
+# outright rather than mapped to anything, since there is no textual
+# equivalent to substitute.
+_ICON_GLYPH_RE = re.compile(
+    r"[\uE000-\uF8FF\U000F0000-\U000FFFFD\u2600-\u27BF\U0001F000-\U0001FFFF]"
+)
+
+# Raw HTML tag leakage, e.g. "<a href=" http://example.com" target=_blank">".
+# Observed in a real web-article PDF export where the underlying page's
+# raw anchor-tag markup (rather than just its rendered/visible link text)
+# got captured as literal text -- likely a copy-paste-from-browser or a
+# broken PDF-export step that didn't fully strip markup before laying out
+# the page. This is pure markup noise for a downstream embedding/topic-
+# modeling pipeline, exactly like a URL, so it's removed the same way.
+#
+# Matched generically as "< ... >" spanning a tag name plus optional
+# attributes, rather than an exact literal string, so it generalizes to
+# any HTML tag that leaks through this way (a link, a span, a div, etc.),
+# not just this one specific anchor tag. Deliberately does NOT match a
+# bare "<" or ">" used as a real comparison/inequality symbol in body
+# text (e.g. "x < 5"), since it requires a tag-name-like word
+# immediately after "<" with no intervening space, and requires the "<"
+# and ">" to be reasonably close together (an angle bracket used as
+# math notation would essentially never have a word-like token followed
+# eventually by a lone ">" within a short span in real prose). The
+# pattern also tolerates the mismatched/unescaped quote characters seen
+# in the real observed case (the source markup's quotes appear to have
+# been mangled by the PDF's own text encoding), where a well-formed-
+# HTML-only parser would fail to match.
+_HTML_TAG_RE = re.compile(r"<\s*/?[a-zA-Z][a-zA-Z0-9]*(?:\s[^<>]{0,200})?>")
 
 _MULTI_SPACE_RE = re.compile(r" {2,}")
 _SPACE_BEFORE_PUNCT_RE = re.compile(r" +([.,;:])")
@@ -126,6 +190,21 @@ class ArtifactCleanupResult:
     urls_removed: int = 0
     emails_removed: int = 0
     separator_lines_removed: int = 0
+    ligatures_normalized: int = 0
+    icon_glyphs_removed: int = 0
+    html_tags_removed: int = 0
+
+
+def _normalize_ligatures(text: str):
+    count = 0
+
+    def _sub(m: "re.Match") -> str:
+        nonlocal count
+        count += 1
+        return _LIGATURE_MAP[m.group(0)]
+
+    new_text = _LIGATURE_RE.sub(_sub, text)
+    return new_text, count
 
 
 def clean_artifacts(
@@ -133,15 +212,32 @@ def clean_artifacts(
     remove_urls: bool = True,
     remove_emails: bool = True,
     remove_separator_lines: bool = True,
+    normalize_ligatures: bool = True,
+    remove_icon_glyphs: bool = True,
+    remove_html_tags: bool = True,
 ) -> ArtifactCleanupResult:
     """
-    Apply URL/e-mail/decorative-separator cleanup to a final block of
-    extracted text. Each cleanup step is independently toggleable so
-    callers (e.g. the CLI) can opt out.
+    Apply URL/e-mail/decorative-separator/ligature/icon-glyph/HTML-tag
+    cleanup to a final block of extracted text. Each cleanup step is
+    independently toggleable so callers (e.g. the CLI) can opt out.
     """
     urls_removed = 0
     emails_removed = 0
     separator_lines_removed = 0
+    ligatures_normalized = 0
+    icon_glyphs_removed = 0
+    html_tags_removed = 0
+
+    if normalize_ligatures:
+        text, ligatures_normalized = _normalize_ligatures(text)
+
+    if remove_icon_glyphs:
+        icon_glyphs_removed = len(_ICON_GLYPH_RE.findall(text))
+        text = _ICON_GLYPH_RE.sub("", text)
+
+    if remove_html_tags:
+        html_tags_removed = len(_HTML_TAG_RE.findall(text))
+        text = _HTML_TAG_RE.sub("", text)
 
     if remove_urls:
         text, urls_removed = _make_stripper(_URL_RE)(text)
@@ -158,7 +254,7 @@ def clean_artifacts(
             kept_lines.append(line)
         text = "\n".join(kept_lines)
 
-    if remove_urls or remove_emails:
+    if remove_urls or remove_emails or remove_icon_glyphs or remove_html_tags:
         # Best-effort cosmetic cleanup of debris left by removing a link
         # that was the entire content of a parenthetical, plus any double
         # spacing introduced by the removal.
@@ -175,7 +271,8 @@ def clean_artifacts(
         # Drop lines that are now empty or contain only leftover
         # punctuation/list-marker characters (e.g. a footnote line that
         # was purely a URL, or a bullet/dash list marker left orphaned
-        # after its "Email:"/"Website:" label was cleaned up above).
+        # after its "Email:"/"Website:" label was cleaned up above, or a
+        # line that was purely icon-font glyphs).
         lines = [
             line
             for line in text.split("\n")
@@ -188,4 +285,7 @@ def clean_artifacts(
         urls_removed=urls_removed,
         emails_removed=emails_removed,
         separator_lines_removed=separator_lines_removed,
+        ligatures_normalized=ligatures_normalized,
+        icon_glyphs_removed=icon_glyphs_removed,
+        html_tags_removed=html_tags_removed,
     )

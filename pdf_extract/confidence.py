@@ -114,6 +114,64 @@ FRAGMENTED_BLOCK_SHORT_FRACTION = 0.65
 # imprint/copyright boilerplate).
 MAX_CHARS_FOR_AUTO_EXCLUDE = 900
 
+# --- Garbled/truncated text-layer detection -----------------------------
+# Distinct from decorative-layout detection above: this catches a genuine
+# PDF *source* defect rather than a stylistic page layout. Found via the
+# feedback loop on a real document where several pages -- visually normal,
+# clean single-column prose when rendered to an image -- had a PDF text
+# layer that was only extracting the first few characters of each line
+# (e.g. "You conclude your letter..." extracted as just "You"), with the
+# extractor's own block/line clustering scattering those truncated
+# fragments into narrow vertical-strip blocks. Word-level extraction
+# (page.get_text("words")) on the same page recovered the full, correct
+# text, confirming the defect is in the PDF's line/block-level text
+# layout metadata specifically, not in the underlying character data.
+#
+# This must be flagged and routed to manual/OCR review, NOT treated as a
+# "decorative page safe to auto-exclude" -- unlike a title page, this
+# pattern can appear on pages carrying substantial real content (e.g. a
+# multi-paragraph appendix letter), where auto-excluding would silently
+# discard real substance rather than harmless cover-page filler.
+#
+# Signature: a block with several distinct lines where each line is only
+# a handful of characters -- consistent with only the first few
+# characters of each real line surviving extraction.
+GARBLED_TEXT_MIN_LINES = 3
+GARBLED_TEXT_MAX_AVG_LINE_CHARS = 6
+# At least this many such blocks on one page is required to flag it --
+# a single such block is much more likely to be an address block, a
+# short list, or similar legitimate short-line content.
+GARBLED_TEXT_MIN_BLOCK_COUNT = 2
+# Real occurrences of this defect were observed only at normal body/
+# footnote text sizes (8-11pt). A decorative title broken into similarly
+# short multi-line fragments uses much larger, heading-sized type (e.g.
+# 18-48pt observed on real title/appendix-heading pages) -- requiring a
+# modest font size here prevents the two signatures from being confused
+# with each other.
+GARBLED_TEXT_MAX_FONT_SIZE = 13.0
+
+
+def count_garbled_text_layer_blocks(blocks) -> int:
+    """
+    Count how many of the given blocks match the truncated-line signature
+    described above. ``blocks`` are TextBlock-like objects exposing
+    ``.text`` (newline-separated lines within a block, as produced by
+    layout.py) and ``.avg_font_size``.
+    """
+    count = 0
+    for block in blocks:
+        text = block.text
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        if len(lines) < GARBLED_TEXT_MIN_LINES:
+            continue
+        avg_len = sum(len(line) for line in lines) / len(lines)
+        if avg_len > GARBLED_TEXT_MAX_AVG_LINE_CHARS:
+            continue
+        if block.avg_font_size and block.avg_font_size > GARBLED_TEXT_MAX_FONT_SIZE:
+            continue
+        count += 1
+    return count
+
 
 @dataclass
 class ConfidenceReport:
@@ -147,6 +205,7 @@ class PageLayoutStats:
     font_size_ratio: float  # max avg_font_size / min avg_font_size across blocks (kept for diagnostics)
     large_short_block_count: int = 0
     short_block_fraction: float = 0.0  # fraction of blocks <= FRAGMENTED_BLOCK_MAX_AVG_CHARS chars
+    garbled_text_layer_block_count: int = 0  # see count_garbled_text_layer_blocks
 
 
 def is_decorative_layout_page(stats: "PageLayoutStats") -> bool:
@@ -171,11 +230,30 @@ def is_decorative_layout_page(stats: "PageLayoutStats") -> bool:
     return False
 
 
+def is_garbled_text_layer_page(stats: "PageLayoutStats") -> bool:
+    """True if this page shows the truncated-line PDF-text-layer defect
+    signature (see module notes above). Distinct from
+    ``is_decorative_layout_page`` -- this is never eligible for
+    auto-exclusion, since the affected page may carry substantial real
+    content that a naive decorative-page rule would otherwise discard."""
+    return stats.garbled_text_layer_block_count >= GARBLED_TEXT_MIN_BLOCK_COUNT
+
+
 def is_safe_to_auto_exclude(stats: "PageLayoutStats") -> bool:
     """True if a decorative-flagged page is also small enough in total
     surviving text that automatically excluding it from output is safe --
     i.e. there isn't enough real content at risk for a false positive to
-    matter. See MAX_CHARS_FOR_AUTO_EXCLUDE."""
+    matter. See MAX_CHARS_FOR_AUTO_EXCLUDE.
+
+    A page matching the garbled-text-layer signature is NEVER eligible
+    for auto-exclusion, regardless of size: that signature indicates a
+    PDF source defect that can affect pages with substantial real
+    content (e.g. a multi-paragraph appendix letter), unlike a genuine
+    decorative title/cover page. Such pages must always be flagged for
+    manual/OCR review instead of being silently dropped.
+    """
+    if is_garbled_text_layer_page(stats):
+        return False
     return stats.total_chars <= MAX_CHARS_FOR_AUTO_EXCLUDE
 
 
@@ -277,8 +355,25 @@ def evaluate(
         report.add("zero characters extracted")
 
     if page_layout_stats:
+        garbled_pages = [
+            s.page_index for s in page_layout_stats if is_garbled_text_layer_page(s)
+        ]
+        if garbled_pages:
+            report.add(
+                f"page(s) {[p + 1 for p in garbled_pages]} show signs of a "
+                f"corrupted/truncated PDF text layer (many lines extracting "
+                f"as only a handful of characters each) -- this is a defect "
+                f"in the source PDF's text encoding, not a pipeline "
+                f"ordering issue, and cannot be fixed by reordering text; "
+                f"consider re-extracting these pages via OCR "
+                f"(--keep-decorative-pages has no effect here) or reviewing "
+                f"the original document manually"
+            )
+
         decorative_pages = [
-            s.page_index for s in page_layout_stats if is_decorative_layout_page(s)
+            s.page_index
+            for s in page_layout_stats
+            if is_decorative_layout_page(s) and not is_garbled_text_layer_page(s)
         ]
         if decorative_pages:
             excluded = [

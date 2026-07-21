@@ -50,7 +50,60 @@ and uses that position information to distinguish real content from noise:
    publication's own labels won't be in the generic phrase list). Blocks
    are clustered by overlapping vertical extent (so a two-line wrapped
    nav item like "Arts &\nCulture" is grouped correctly with its
-   single-line neighbors) rather than a fixed position tolerance.
+   single-line neighbors) rather than a fixed position tolerance. This
+   heuristic additionally requires the candidate row's font sizes to be
+   near-uniform and modest (≤16pt, ≤1.3× ratio between largest/smallest)
+   -- found necessary after a real CAUT report's decorative title-page
+   fragments (font sizes ranging ~27-46pt, many short pieces spanning a
+   wide portion of the page) were being consumed by this heuristic before
+   the decorative-page detector (step 7 below) ever got to see them,
+   hiding the whole page from that detector and leaving it garbled in
+   the output instead of cleanly auto-excluded.
+
+   A third heuristic catches a nav bar/footer/social-icon-strip that a
+   PDF's own layout merged into a *single* multi-line text block (rather
+   than one block per item) -- common on real news-site exports, e.g. an
+   entire "Local / Watch / Trade War / ... / Sign In" nav bar as one
+   block. Two complementary signals are used: (a) a fraction of the
+   block's individual lines matching the generic chrome-phrase list, for
+   cases where at least some items are in that list; and (b) a purely
+   geometric "packed short lines" signal for cases where none of the
+   items are (a publication's own section names, which can't be
+   enumerated generically) -- comparing the block's actual height against
+   what that many lines would occupy if they were genuinely stacked
+   paragraph text at that font size. Side-by-side nav items packed onto
+   what PyMuPDF reports as several separate "lines" occupy far less
+   vertical space than the same number of genuinely stacked lines would,
+   so a low height-per-line-vs-font-size ratio (< 0.7) is a reliable,
+   wording-independent tell. This is additionally restricted to short
+   lines (≤4 words each) with no digits or table-structure characters
+   (`/`, `#`), so it can't be confused with a report's short table cells
+   (e.g. a "Date / Item # / Event" row), which are also tightly packed
+   but carry real tabular content.
+
+   A fourth heuristic detects a "card grid" -- several narrow blocks
+   (e.g. "related articles" teaser cards) sitting side by side, each
+   internally containing a short multi-line teaser. Detected via
+   union-find clustering on blocks that substantially overlap each
+   other's vertical extent but don't overlap horizontally. This
+   heuristic needed several additional safeguards after a real CAUT
+   report's *own* torn-multi-column appendix letters and heavily
+   fragmented decorative pages turned out to satisfy the same geometry
+   test purely by coincidence of how many narrow columns happened to
+   line up:
+   - Blocks matching the garbled-text-layer signature (see step 7 below)
+     are never eligible, so this heuristic can't hide that defect from
+     its dedicated detector.
+   - A cluster may contain at most 8 items -- no genuine card-grid row
+     observed in a real corpus exceeded 7, while the report's
+     false-positive clusters ran into the dozens or hundreds.
+   - Card-grid detection is skipped entirely on any page where narrow
+     blocks make up more than 80% of that page's blocks -- a real
+     card-grid page is still a normal page of mostly-normal-width
+     content with the teaser row as one small feature (≤77% narrow in
+     every genuine example found), while a torn-text or decorative page
+     is overwhelmingly narrow blocks (92-100% in every false-positive
+     found).
 4. **Reassembly** (`pdf_extract/reassemble.py`) — surviving blocks are
    joined back into clean paragraphs in reading order. Order is determined
    per page using a simplified recursive "XY-cut": the page is split at any
@@ -117,6 +170,26 @@ and uses that position information to distinguish real content from noise:
      blocks) against every genuine content page in a real 43-document
      batch, including dense historical reports with many short
      footnote-style blocks (all of which stayed under 50%).
+
+   A closely related but distinct check catches a genuine **PDF text-layer
+   defect** rather than a page layout: on a real CAUT report, several
+   pages -- visually completely normal, clean prose when rendered to an
+   image -- had a text layer where the extractor's own line/block
+   clustering only recovered the first few characters of each real line
+   (e.g. "You conclude your letter..." extracting as just "You"),
+   scattering the truncated fragments into many narrow vertical-strip
+   blocks. Crucially, this affected pages carrying substantial real
+   content (e.g. a full appendix letter), so it must **never** be treated
+   as a decorative page safe to auto-exclude the way a title page is --
+   doing so would silently discard real substance. `is_garbled_text_layer_page()`
+   detects this signature (≥2 blocks per page with ≥3 lines each,
+   averaging ≤6 characters per line, at a modest font size ≤13pt to avoid
+   colliding with the decorative-fragment signature above) and
+   `is_safe_to_auto_exclude()` unconditionally returns `False` for any
+   page matching it -- such a page is always flagged for manual review
+   with a note explaining the defect is in the source PDF's own encoding
+   and recommending OCR, never silently excluded or left in a garbled
+   state with no explanation.
 8. **Text-level artifact cleanup** (`pdf_extract/artifacts.py`) — applied to
    the final reassembled text, after layout-based cleanup:
    - **URLs** (`http://`, `https://`, and bare `www.` links, including ones
@@ -126,15 +199,38 @@ and uses that position information to distinguish real content from noise:
    - **Decorative separator lines** (rows of repeated dashes/underscores/em
      dashes used as visual dividers, e.g. above a footnote block) are
      removed.
+   - **Typographic ligatures** (e.g. U+FB01 "ﬁ", U+FB02 "ﬂ") are normalized
+     back to their constituent plain letters ("fi", "fl") -- PDF fonts
+     commonly encode these letter pairs as a single glyph for kerning
+     reasons, which would otherwise make a word like "fired" extract as
+     the visually-identical-but-distinct token "ﬁred", splitting it from
+     "fired" in a downstream vocabulary.
+   - **Icon/symbol-font glyphs** (e.g. a social-share icon font's
+     Facebook/Twitter/share-arrow icons, embedded as ordinary text runs in
+     some web-article PDF exports) are stripped outright. These land in
+     Unicode's Private Use Area or symbol/dingbat ranges and have no real
+     textual equivalent -- they're meaningless noise once separated from
+     the specific icon font that gave them a visual glyph.
+   - **Leaked raw HTML tag markup** (e.g. a literal `<a href="...">` anchor
+     tag that ended up in the extracted text instead of just its rendered
+     link text -- observed in one real web-article export, likely from a
+     copy-paste-from-browser or incomplete PDF-export step) is removed.
+     Matched generically by tag shape rather than as a specific literal
+     string, so it generalizes to other leaked tags, and tolerates the
+     mismatched/unescaped quote characters seen in the real observed case.
 
    This exists specifically because the extracted text is meant to feed a
    downstream word-embedding/topic-modeling pipeline (e.g. BERTopic), where
-   URLs and e-mail addresses are high-entropy noise tokens that inflate
-   vocabulary without contributing any topical signal. Trailing sentence
-   punctuation glued to a removed URL (e.g. the closing "." in
-   "...malaise/.") is preserved. Each cleanup is independently toggleable
-   via CLI flags (`--keep-urls`, `--keep-emails`, `--keep-separator-lines`)
-   if you'd rather keep any of these for a different downstream use.
+   URLs, e-mail addresses, icon glyphs, and HTML markup are high-entropy or
+   meaningless noise tokens that inflate vocabulary without contributing
+   any topical signal, and ligature codepoints needlessly split what
+   should be a single vocabulary token into two visually-identical forms.
+   Trailing sentence punctuation glued to a removed URL (e.g. the closing
+   "." in "...malaise/.") is preserved. Each cleanup is independently
+   toggleable via CLI flags (`--keep-urls`, `--keep-emails`,
+   `--keep-separator-lines`, `--keep-ligatures`, `--keep-icon-glyphs`,
+   `--keep-html-tags`) if you'd rather keep any of these for a different
+   downstream use.
 
    Also handled: when a URL or e-mail address sits on its own line
    directly after an introducer phrase (common in letterheads/footnotes,
@@ -203,7 +299,7 @@ document with:
 | `ocr_pages_used` | 1-indexed pages that required OCR fallback |
 | `auto_excluded_pages` | 1-indexed pages automatically dropped as decorative layout (see sidecar file) |
 | `excluded_output_file` | path to the `<name>.excluded.txt` sidecar file, if any pages were auto-excluded |
-| `urls_removed` / `emails_removed` / `separator_lines_removed` | counts of each artifact type stripped from this document |
+| `urls_removed` / `emails_removed` / `separator_lines_removed` / `ligatures_normalized` / `icon_glyphs_removed` / `html_tags_removed` | counts of each artifact type stripped from this document |
 
 Filter to `flagged == True` (or `success == False`) to get your manual
 review queue instead of spot-checking the whole batch. If `excluded_output_file`
@@ -221,6 +317,9 @@ python extract.py --input ./input_pdfs --output ./output_text \
     --keep-urls              `# don't strip http(s)/www links` \
     --keep-emails            `# don't strip e-mail addresses` \
     --keep-separator-lines   `# don't strip dash/underscore divider lines` \
+    --keep-ligatures         `# don't normalize ligature characters (e.g. U+FB01 -> "fi")` \
+    --keep-icon-glyphs       `# don't strip icon-font/symbol glyphs` \
+    --keep-html-tags         `# don't strip leaked raw HTML tag markup` \
     --keep-decorative-pages  `# don't auto-exclude small decorative pages`
 ```
 
@@ -269,18 +368,39 @@ See `samples/README.md` for more detail. This folder is for curated QA
 samples only -- keep your actual production batch of several hundred
 documents in your own local (gitignored) input/output directories.
 
-This loop has been run twice so far, each time against a larger and more
-varied real batch (most recently 43 documents spanning news articles,
-letters, NGO correspondence, CAUT investigative reports, university
-website printouts, Wikipedia article printouts, and long-form academic
-journal articles). Each round found and fixed real issues that synthetic
-fixtures alone hadn't surfaced -- most notably a website-chrome page
-(nav bar + footer + newsletter signup) that leaked almost entirely into
-main output uncaught, and a sparse news page whose real headline/caption
-was too short to reliably distinguish from a sidebar teaser list under
-the original column-estimation logic. Both are now covered by dedicated
-synthetic regression fixtures (see "Testing" below) so they can't
-silently regress.
+This loop has been run three times so far, each time against a larger and
+more varied real batch (most recently 21 documents spanning news articles,
+letters, NGO correspondence, CAUT investigative reports, and a full
+100+ page CAUT investigatory report). Each round found and fixed real
+issues that synthetic fixtures alone hadn't surfaced:
+
+- **Round 1/2**: a website-chrome page (nav bar + footer + newsletter
+  signup) that leaked almost entirely into main output uncaught, and a
+  sparse news page whose real headline/caption was too short to reliably
+  distinguish from a sidebar teaser list under the original
+  column-estimation logic.
+- **Round 3**: a decorative title page's fragments being consumed by the
+  nav-row heuristic before the decorative-page detector could see them
+  (fixed via a font-size uniformity/size constraint on that heuristic); a
+  genuine PDF text-layer defect on several pages of a real report,
+  scattering truncated line fragments into narrow blocks -- serious
+  because, unlike a decorative page, those pages carried substantial real
+  content and could never be safely auto-excluded (fixed via a dedicated
+  `is_garbled_text_layer_page()` detector, always flagged-only, never
+  auto-excludable); ligature characters (e.g. "ﬁ") and icon-font glyphs
+  splitting/polluting a downstream vocabulary; a nav bar/social-icon-strip
+  merged into a single PDF text block by several different outlets'
+  exports, whose individual items didn't match the generic chrome-phrase
+  list (fixed via a wording-independent "packed short lines" geometric
+  signal); a "card grid" teaser-row detector that, after being added,
+  turned out to also match a real report's own torn-multi-column
+  appendix letters and fragmented decorative pages purely by coincidence
+  of geometry (fixed via a cluster-size cap and a page-level
+  narrow-block-fraction gate); and a leaked raw HTML anchor tag in one
+  real article's extracted text.
+
+All of the above are now covered by dedicated regression tests (see
+"Testing" below) so they can't silently regress.
 
 Per-repository convention: after each review round, `samples/input/` and
 `samples/output/` are cleared back to empty (aside from `.gitkeep`) before
@@ -293,20 +413,44 @@ workflow.
 
 ## Testing
 
-The test suite runs against small synthetic PDF fixtures (generated with
-`reportlab`, not real documents) that reproduce the *structural* patterns
-this tool targets — a repeated running header/watermark, a printed web
-article with a nav bar and sidebar, a letter with a letterhead column, a
-multi-page report with a running header/footer, a genuine two-column body
-(to check columns are read fully in order, not interleaved), a decorative
-title page mixing oversized headline blocks with normal-sized text (to
-check it's auto-excluded and preserved in a sidecar file rather than left
-garbled), a larger fragmented-but-substantive page (to check the safety
-cap prevents auto-exclusion of real content), a sparse headline-plus-
-sidebar page and a mostly-chrome nav/footer page (both reproducing real
-bugs found via the feedback loop -- see above), and text-level checks for
-URL/e-mail/separator-line cleanup including a URL wrapped across a line
-break.
+The test suite (`tests/test_pipeline.py`) runs against small synthetic PDF
+fixtures (generated with `reportlab`, not real documents) that reproduce
+the *structural* patterns this tool targets — a repeated running
+header/watermark, a printed web article with a nav bar and sidebar, a
+letter with a letterhead column, a multi-page report with a running
+header/footer, a genuine two-column body (to check columns are read fully
+in order, not interleaved), a decorative title page mixing oversized
+headline blocks with normal-sized text (to check it's auto-excluded and
+preserved in a sidecar file rather than left garbled), a larger
+fragmented-but-substantive page (to check the safety cap prevents
+auto-exclusion of real content), a sparse headline-plus-sidebar page and a
+mostly-chrome nav/footer page (both reproducing real bugs found via the
+feedback loop -- see above).
+
+Three additional test files exercise the finer-grained heuristics added
+during the third feedback round directly against `TextBlock`/
+`PageLayoutStats` objects, since these check purely structural/geometric
+properties that are easier to construct precisely by hand than to
+reproduce faithfully via a rendered PDF fixture:
+
+- `tests/test_columns.py` — the nav-row font-uniformity guard (a
+  decorative title's fragments must not be mistaken for a nav row), the
+  packed-short-lines merged-chrome-block signal (a merged nav bar must be
+  caught; a genuine paragraph, a decorative fragment, and a table cell
+  with digits must not be), and the card-grid safeguards (garbled-text
+  blocks must be excluded from eligibility; a page dominated by narrow
+  blocks must skip card-grid detection entirely; an oversized cluster
+  must be rejected; a genuine card grid must still be detected).
+- `tests/test_confidence.py` — the garbled/truncated PDF text-layer
+  defect detector (a real truncated-line block must be flagged; a normal
+  paragraph and a large-font decorative fragment must not be; a garbled
+  page must never be considered safe to auto-exclude, even if it also
+  matches the decorative-layout signature and is small enough).
+- `tests/test_artifacts.py` (extended) — ligature normalization,
+  icon-glyph removal, and HTML tag stripping (including the malformed/
+  mismatched-quote variant seen in the real observed case, and a check
+  that a real "<" comparison operator in body text is never mistaken for
+  a tag).
 
 ```bash
 pip install -r requirements.txt

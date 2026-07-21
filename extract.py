@@ -84,6 +84,26 @@ def main(argv=None) -> int:
         "them in the main .txt file (flagged) instead of moving them to a "
         "<name>.excluded.txt sidecar file.",
     )
+    parser.add_argument(
+        "--keep-ligatures",
+        action="store_true",
+        help="Do not normalize typographic ligature characters (e.g. U+FB01 "
+        "'\ufb01' -> 'fi') back to their constituent plain letters.",
+    )
+    parser.add_argument(
+        "--keep-icon-glyphs",
+        action="store_true",
+        help="Do not strip icon-font/symbol glyphs (e.g. social-share icons "
+        "embedded as text runs in some web-article PDF exports) from the "
+        "output text.",
+    )
+    parser.add_argument(
+        "--keep-html-tags",
+        action="store_true",
+        help="Do not strip raw HTML tag markup (e.g. a leaked '<a href=...>' "
+        "anchor tag) that occasionally leaks into extracted text from a "
+        "web-article PDF export.",
+    )
     args = parser.parse_args(argv)
 
     if not os.path.isdir(args.input):
@@ -117,6 +137,9 @@ def main(argv=None) -> int:
             remove_urls=not args.keep_urls,
             remove_emails=not args.keep_emails,
             remove_separator_lines=not args.keep_separator_lines,
+            normalize_ligatures=not args.keep_ligatures,
+            remove_icon_glyphs=not args.keep_icon_glyphs,
+            remove_html_tags=not args.keep_html_tags,
             auto_exclude_decorative_pages=not args.keep_decorative_pages,
         )
         results.append(result)
