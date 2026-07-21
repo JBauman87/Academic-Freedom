@@ -111,6 +111,76 @@ class TestSeparatorLineRemoval:
         assert "—————" in result.text
 
 
+class TestDanglingLinkIntroducerCleanup:
+    def test_website_at_dangling_after_url_removal(self):
+        # Common in letterheads: "...please see our website at \n" is
+        # followed by the URL on its own line/paragraph. Removing the URL
+        # would otherwise leave "...website at" dangling with nothing
+        # after it.
+        text = "please see our website at \n\nwww.safs.ca.)\nOur Society is concerned"
+        result = clean_artifacts(text)
+        assert "website at" not in result.text
+        assert "please see our" in result.text
+        assert "Our Society is concerned" in result.text
+
+    def test_email_colon_dangling_after_address_removal(self):
+        text = "B3L 4T6, Canada; e-mail: safs@safs.ca\n\nTo date, McGill has not"
+        result = clean_artifacts(text)
+        assert "e-mail:" not in result.text
+        assert "B3L 4T6, Canada" in result.text
+        assert "To date, McGill has not" in result.text
+
+    def test_facebook_colon_dangling_after_link_removal(self):
+        text = "Montréal (Qc) H2V 4L1 \nFacebook: https://www.facebook.com/safs.ca/\nProfessor of Philosophy"
+        result = clean_artifacts(text)
+        assert "Facebook:" not in result.text
+        assert "facebook.com" not in result.text
+        assert "Professor of Philosophy" in result.text
+
+    def test_real_wrapped_sentence_ending_in_at_is_not_touched(self):
+        # This must NOT be altered: a real sentence legitimately word-
+        # wrapping onto "at" at the end of a line, with no URL/e-mail
+        # involved anywhere in the text, must be left completely intact.
+        # A generic "strip trailing short word" heuristic would corrupt
+        # this; only specific unambiguous link-introducer phrases (e-mail:,
+        # website at, etc.) are removed, and only when a link was actually
+        # found and removed elsewhere in the text.
+        text = (
+            "it would have taken no time at\n"
+            "all for those who would have been outraged by the article."
+        )
+        result = clean_artifacts(text)
+        assert result.text == text
+        assert result.urls_removed == 0
+
+    def test_orphaned_bullet_marker_line_is_dropped(self):
+        # A "• Email: <address>" line, once the introducer and address are
+        # both removed, can leave a bare bullet character alone on its own
+        # line -- pure noise that should be dropped, while a bullet line
+        # that still has real content after it must be kept.
+        text = (
+            "Some real closing paragraph.\n"
+            "\u2022 Email: safs@safs.ca\n"
+            "\u2022 A bullet item with real content."
+        )
+        result = clean_artifacts(text)
+        assert "\u2022 Email" not in result.text
+        lines = result.text.split("\n")
+        assert not any(line.strip() == "\u2022" for line in lines)
+        assert "A bullet item with real content." in result.text
+
+    def test_introducer_only_cleaned_when_a_link_was_actually_removed(self):
+        # If remove_urls/remove_emails are disabled (so nothing is
+        # actually stripped), the dangling-introducer cleanup must not
+        # run either -- otherwise it could remove a legitimate
+        # "e-mail:" label that's still followed by a real address the
+        # user chose to keep.
+        text = "Contact us; e-mail: safs@safs.ca for more information."
+        result = clean_artifacts(text, remove_emails=False)
+        assert "e-mail:" in result.text
+        assert "safs@safs.ca" in result.text
+
+
 class TestEmptyBracketCleanup:
     def test_parenthetical_containing_only_a_url_is_cleaned_up(self):
         text = "This is discussed elsewhere (see https://example.com/page)."

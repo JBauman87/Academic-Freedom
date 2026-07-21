@@ -1,69 +1,3 @@
-R
-I
-i
-A
-M
-U
-Repor
-Implic
-in the
-Andre
-rt on t
-cation
-the 
-ns for A
-Acade
-emic F
-Freedo
-om
-Case 
-ew Pot
-of 
-tter at
-t McG
-Gill Uni
-iversit
-ty
-Mark Gabb
-University
-bert
-of Manito
-oba
-ridell, David R
-Author's A
-I am grateful t
-Academic Fre
-McGovern-Po
-Acknowled
-dgements 
-ming, Gavin Fr
-to Greg Flemm
-eedom and Ten
-Robinson, Penn
-ni Stewart, Jim
-m Turk and me
-mbers of the C
-members Marg
-nure Committe
-ssa McHugh fo
-ee for their com
-or their very he
-mments and to
-elpful editorial
-o CAUT profe
-l support.
-essional staff m
-otié and Maris
-©
-2
-© 2015 Canadian 
-2705 Queensview
-Association of U
-w Drive, Ottawa, O
-niversity Teache
-Ontario K2B 8K2 \
-rs 
-\\ 613-820-2270 \\
 I| Background
 On March 20, 2017, Professor Andrew Potter, Director of the McGill Institute for the Study of Canada (MISC), published 
 an article in Maclean’s magazine entitled “How a snowstorm exposed Quebec’s real problem: social malaise.”1 Reflecting on 
@@ -103,7 +37,7 @@ the conditional academic freedom of academic administrators which both purported
 resignation and put other administrators on notice that their academic freedom was subject to limits. 
 In light of this, the Executive Director of the Canadian Association of University Teachers (CAUT) requested that Dr. 
 Mark Gabbert, of the University of Manitoba, investigate this matter and report to the CAUT Academic Freedom and 
-Tenure Committee. Professor Gabbert was asked to:
+Tenure Committee. Professor Gabbert was asked to: 
 1. review all the documentary evidence in the case that was publicly available; 
 2. determine whether there was a violation of academic freedom as defined in the CAUT Policy Statement on 
 Academic Freedom and the Policy Statement on Academic Freedom for Academic Administrators; and 
@@ -125,7 +59,7 @@ bureaucracy was soon scrambling to respond. By 7am, the Media Relations Departme
 that the Potter article had generated “lots of outrage.”6 The first official comment came in a tweet sent at 10:54 the morning 
 of March 21 in which the University declared that “[t]he views expressed by @JAndrewPotter in the @MacleansMag 
 article do not represent those of #McGill.”7 Shortly thereafter, Andrew Potter posted an apology on Facebook which was e-
-mailed to the press. It read in part:
+mailed to the press. It read in part: 
 My intention in writing the piece was not to insult Quebec and Quebecers. As naive as this sounds, it 
 came out of a good-faith attempt to understand what happened with the closure of Highway 13 during 
 the snowstorm, and to find that understanding in some statistics on social capital in the province and 
@@ -137,18 +71,18 @@ By this time, the Premier of Quebec had also waded into the discussion, publicly
 very poor quality. It’s a work of very poor quality essentially based on prejudice and artificial impressions, some aggressivity 
 even towards Quebecers.”9 
 At the end of the afternoon of March 21, Professor Potter wrote to the Board of Trustees of MISC apologizing for the 
-piece:
+piece: 
 As some of you will have seen by now, I wrote a piece yesterday for Maclean’s magazine making an 
 argument about the relationship between the recent snowstorm crisis in Montreal and levels of social 
 solidarity in the province. The article has generated a great deal of negative feedback here in Quebec, 
-most of it directed at me personally but much has inevitably been directed at McGill and the Institute.
+most of it directed at me personally but much has inevitably been directed at McGill and the Institute. 
 The piece is ill-considered in many ways, from the poor use of anecdotes to excessively negative 
 rhetorical flourishes that add nothing to the argument. But probably the most significant is that it’s simply 
 not the sort of piece I should be writing in my capacity as Director....
 6. At 6:38 am that morning, Social Media Manager Laurie Devine e-mailed Vice-Principal (Communications and External Relations) Louis 
 Arseneault; the Principal’s Chief of Staff, Susan Aberman; Provost Christopher Manfredi; and Leigh Yetter, Senior Director, Strategy and 
 Operations in the Provost’s office. See “569 Documents_Previous Requests,” CAUT, p. 418. For a sense of the considerable resources McGill 
-has invested in PR, see and the media relations website at 
+has invested in PR, see and the media relations 
 . Accessed 10 July 2017. 
 7.. 
 8. Quoted in “Writer 'very sorry' for causing offence at accusing Quebec of 'social malaise,'” Montreal Gazette, 21 March 2017. Accessed 11 July 2017: 
@@ -197,7 +131,7 @@ academic freedom protections because he had failed to indicate that the views pr
 and not those of MISC. 
 It was no doubt in part to respond to growing concerns about the impact of the Potter affair on academic freedom that at 
 the McGill Senate meeting held at 2:30 the afternoon of March 22, McGill Principal Suzanne Fortier felt obliged to clarify 
-matters. As the minutes record:
+matters. As the minutes record: 
 The Chair then took this opportunity to note that while the accomplishments of McGill students, 
 employees and alumni, have a positive impact on the McGill community and the University, unfortunate 
 actions or words may carry a negative impact. She stressed that academic freedom is one of the 
@@ -214,7 +148,7 @@ Potter’s earlier apology to the Board of MISC for the inappropriateness of his
 MISC “shows that he had, on his own, come to the conclusion that what he had done was incompatible with his role as 
 Director, prior to meeting with me.”18 Of course this claim leaves open the question of what Principal Fortier actually said 
 to Professor Potter during that meeting. In any case, by the end of the day on March 22, Professor Potter had resigned as 
-Director of MISC:
+Director of MISC: 
 March 22, 2017 
 In light of the ongoing negative reaction within the university community and the broader public to my 
 column published in the March 20 online edition of Maclean’s, I have submitted my resignation as 
@@ -235,7 +169,7 @@ Institute will be best served by my resignation. I intend to continue with my cu
 McGill, and I hope to serve the school in any place I might be effective.19 
 Finally, in the early evening of March 23, McGill Principal Fortier wrote to the McGill community to announce Professor 
 Potter’s resignation. In it, she implicitly approved of his resignation as arising from his failure to adhere to the “mission” of 
-MISC:
+MISC: 
 The Board of MISC regretfully accepted Professor Potter’s resignation. The mission of MISC is to 
 promote a better understanding of Canada through the study of our heritage and to support the study of 
 Canada across the country and internationally. Professor Potter recognized that he had failed to uphold this 
@@ -247,7 +181,7 @@ point, she concluded her message by reproducing without comment the McGill state
 But the matter of academic freedom refused to go away. By the early evening of March 23, the McGill administration was 
 hearing about the number of communications from alumni concerned about the implications of the Potter affair for 
 academic freedom.21 Earlier that day, a Globe and Mail editorial had taken McGill to task for its failure to defend Professor 
-Potter’s academic freedom, concluding with:
+Potter’s academic freedom, concluding with: 
 Let’s be perfectly clear: In a liberal democracy, the writing of an ill-considered magazine column is a 
 trifling concern compared to the possible sanctioning of a university professor for writing the column in 
 question. 
@@ -295,7 +229,7 @@ Two days after Principal Fortier’s interview with the Globe and Mail, the stud
 article on the matter in which Doug Sweet, the Director of McGill Internal Communications, elaborated on Principal 
 Fortier’s views.27 Mr. Sweet emphasized that faculty members had to indicate clearly when they spoke for themselves and 
 not for the University. Because Professor Potter’s byline named him as Director of MISC, the assumption was that he was 
-not speaking for himself. Mr. Sweet was quoted as saying that:
+not speaking for himself. Mr. Sweet was quoted as saying that: 
 Had the article in question been signed by the Professor as an individual academic, the University would 
 have had a responsibility to defend a matter of academic freedom.... [....Potter’s] resignation from that 
 post was not accepted because of controversy surrounding the article or whether McGill agreed with it or
@@ -325,7 +259,7 @@ explanation of McGill’s view on the extent to which the academic freedom of ad
 comparison with that enjoyed by faculty members without administrative appointments. They also questioned 
 Communications Director Sweet’s claim that when identified in a byline as administrators it is reasonable to assume that 
 administrators’ views are those of the institution they lead rather than their own. In conclusion, the writers called on the 
-Principal to address four questions:
+Principal to address four questions: 
 1. Are “academic administrators” outside the protection CAUT describes as applying to “all academic staff”? 
 2. If so, which academic administrators are outside of it? Does the exclusion apply to the principal, the provost, 
 deans, associate deans, directors of centres and institutes, department chairs, all occupants of administrative 
@@ -365,7 +299,7 @@ of principles that also includes “integrity, responsibility, equity, and inclu
 activities,” academic administrators could rely unquestionably on protection for their academic freedom.31 She noted, 
 however, that the University administration’s general obligation to protect the academic freedom of faculty members was 
 complicated in the case of academic administrators due to the need to assure that administrative duties be properly carried 
-out:
+out: 
 Although University officers may not interfere with the academic freedom of academic 
 administrators and, moreover, have a duty to respect and protect it, they also have an obligation to 
 ensure that administrative responsibilities are discharged effectively to the highest institutional 
@@ -379,7 +313,7 @@ obligation to protect the academic freedom of administrators ran up against its 
 31. Ibid., p. 7. 
 32. Ibid.
 proper administrative functioning of a unit. There could be no hard and fast way to determine in advance how to 
-handle such cases, a matter that would have to be left to the discretion of administrators:
+handle such cases, a matter that would have to be left to the discretion of administrators: 
 Tensions or conflicts between the exercise of academic freedom by academic administrators and their 
 obligation to execute their administrative responsibilities effectively are rare. So are tensions or conflicts 
 between the University’s duty to protect the academic freedom of academic administrators and its 
@@ -390,7 +324,7 @@ on the part of both academic administrators and senior university officers, acti
 regard for institutional neutrality and free inquiry.33 
 When such cases do arise, Principal Fortier claimed, academic administrators who conclude that they are not able to meet 
 the standards for good administration are well advised to resign their positions. But in cases where the standard is not met 
-and there is no voluntary resignation, the University might have to intervene to remove an administrator:
+and there is no voluntary resignation, the University might have to intervene to remove an administrator: 
 When academic administrators no longer believe that they are able to discharge their administrative 
 responsibilities effectively, then it is reasonable for them to step down from those responsibilities. 
 Similarly, the University may, through the relevant institutional procedures appropriate for each 
@@ -426,7 +360,7 @@ the McGill Tribune, she noted that it was “part of McGill’s mission to serve
 service to Quebec,” implying that Professor Potter’s column had not been consistent with that mission. To faculty 
 members present who raised concerns about academic freedom, she responded that the expression of administrators 
 had to conform to McGill standards. Among the norms of proper administrative comportment, avoiding 
-“provocation” and “heated debate” were apparently central. The McGill Tribune quotes her as saying:
+“provocation” and “heated debate” were apparently central. The McGill Tribune quotes her as saying: 
 There is no restriction on academic freedom as faculty members....It is only as it pertains to your 
 ability to deliver your mandate. [Faculty members] will choose not to occupy administrative 
 positions because they have assumed a role that is important in university of being provocative, 
@@ -487,7 +421,7 @@ If the inappropriate distinction between journalism and speech protected by acad
 administrators, was only suggested in Principal Fortier’s comments, McGill’s Dean of Arts, Professor Antonia 
 Maioni, held a much clearer view of the matter. In an e-mail to Principal Fortier written two days after Professor 
 Potter’s resignation was announced, Dean Maioni strongly suggested that Professor Potter had not met the standards 
-of scholarship necessary to bring his piece under the protection of academic freedom:
+of scholarship necessary to bring his piece under the protection of academic freedom: 
 I just want to clarify that academic freedom is a privilege, not an entitlement. It is based on a 
 responsibility to strict standards of research and intellectual honesty in the academy. And an 
 administrative position has a further responsibility based on the description of its duties. Andrew was no 
@@ -552,7 +486,7 @@ speech, see Saskatchewan (Human Rights Commission) v. Whatcott, 2013 SCC 11:.
 46. Matthew W. Finkin and Robert C. Post, For the Common Good: Principles of American Academic Freedom (New Haven: Yale University Press, 
 2009), p. 39. See also Matthew W. Finkin, "Academic Freedom and Professional Standards," in James L. Turk, ed., Academic Freedom in 
 Conflict: The Struggle Over Free Speech Rights in the University (Toronto: James Lorimer, 2014), p. 70. 
-47. Minutes of the McGill Senate Meeting, 20 April 2017, pp. 6-7. Accessed 8 July 2017: 
+47. Minutes of the McGill Senate Meeting, 20 April 2017, pp. 6-7. Accessed 8 July 2017:
 . These concerns were first raised by McGill's Directors of 
 Institutes in their letter to Principal Fortier of 4 April 2017 (see above note 29). 
 48. Ibid, pp. 7-8. 
@@ -563,7 +497,7 @@ to the uproar over Potter’s piece. In the process, she admitted that when indi
 spoke publicly it was fair to assume that they spoke for themselves and not for the University. What was missing in 
 her response, however, was any acknowledgement that the tweet represented a failure on the part of the McGill 
 administration to uphold a key provision of its own statement on academic freedom that required the University to 
-defend both its own autonomy and the academic freedom of its faculty members against outside interference:
+defend both its own autonomy and the academic freedom of its faculty members against outside interference: 
 The university and its officers have a duty to protect the academic freedom of its scholarly 
 community, both individually and collectively, from infringement and undue external influence as 
 well as to maintain the university’s institutional autonomy.50 

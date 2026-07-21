@@ -64,6 +64,30 @@ _EMPTY_BRACKETS_RE = re.compile(r"[\(\[]\s*[\)\]]")
 _MULTI_SPACE_RE = re.compile(r" {2,}")
 _SPACE_BEFORE_PUNCT_RE = re.compile(r" +([.,;:])")
 
+# Dangling link/address "introducer" phrases left behind at the end of a
+# line when the URL/e-mail that followed sat on its own separate line
+# (common in letterheads and footnote blocks, e.g. "...Canada; e-mail: \n"
+# followed by "safs@safs.ca" on the next line -- removing the address
+# leaves "...Canada; e-mail:" dangling with nothing after it).
+#
+# This list is deliberately narrow and specific rather than a general
+# "line ends with a short word" heuristic: real body text legitimately
+# word-wraps mid-sentence at arbitrary points, including onto words like
+# "at", "see", or "via" (e.g. "...it would have taken no time at" wrapping
+# onto "all..." on the next line) -- so a generic "strip trailing short
+# word" rule would corrupt real sentences. Each phrase below is instead
+# a specific, unambiguous link/contact-info introducer that essentially
+# never occurs as the natural end of a wrapped sentence for any other
+# reason, based on patterns observed across a real batch of letters and
+# reports. Only the introducer phrase itself (plus any immediately
+# preceding "," or ";" separator) is removed; the rest of the line -- the
+# actual content before it -- is preserved.
+_DANGLING_LINK_INTRODUCER_RE = re.compile(
+    r"[,;]?[ \t]*\b(?:e-?mail|facebook|twitter|linkedin|instagram|website)\s*:[ \t]*$"
+    r"|\bwebsite\s+at[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 
 def _strip_trailing_punct(matched: str) -> tuple:
     """Split a regex match into (core, trailing_punct), where trailing
@@ -139,14 +163,23 @@ def clean_artifacts(
         # that was the entire content of a parenthetical, plus any double
         # spacing introduced by the removal.
         text = _EMPTY_BRACKETS_RE.sub("", text)
+        # Remove a link/contact introducer phrase left dangling at the end
+        # of a line (see _DANGLING_LINK_INTRODUCER_RE docstring above).
+        # Only run this when a URL/e-mail was actually removed by this
+        # call -- it's specifically cleanup for debris *this cleanup step*
+        # can cause, not a general-purpose text transformation.
+        if urls_removed or emails_removed:
+            text = _DANGLING_LINK_INTRODUCER_RE.sub("", text)
         text = _MULTI_SPACE_RE.sub(" ", text)
         text = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", text)
         # Drop lines that are now empty or contain only leftover
-        # punctuation (e.g. a footnote line that was purely a URL).
+        # punctuation/list-marker characters (e.g. a footnote line that
+        # was purely a URL, or a bullet/dash list marker left orphaned
+        # after its "Email:"/"Website:" label was cleaned up above).
         lines = [
             line
             for line in text.split("\n")
-            if line.strip(" .,;:()[]\u201c\u201d\u2018\u2019")
+            if line.strip(" .,;:()[]\u201c\u201d\u2018\u2019\u2022\u25cf\u25e6-")
         ]
         text = "\n".join(lines)
 

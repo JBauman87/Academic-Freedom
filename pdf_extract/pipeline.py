@@ -181,6 +181,23 @@ def process_document(
             font_size_ratio = (max(avg_sizes) / min(avg_sizes)) if avg_sizes else 1.0
             total_chars_this_page = sum(len(b.text) for b in surviving)
             avg_chars = total_chars_this_page / len(surviving)
+
+            # "Dominant body font size" = the font size of whichever
+            # surviving block has the most characters. That block is, by
+            # construction, real paragraph text (decorative fragments are
+            # short), so comparing other blocks' sizes against it -- not
+            # against the page's overall min/max -- is what distinguishes
+            # "one normal heading above a paragraph" from "several
+            # oversized decorative fragments" (see confidence.py docstring).
+            body_block = max(surviving, key=lambda b: len(b.text))
+            body_font_size = body_block.avg_font_size or 1.0
+            large_short_count = sum(
+                1
+                for b in surviving
+                if b.avg_font_size >= body_font_size * confidence.LARGE_FONT_MULTIPLIER
+                and len(b.text) <= confidence.LARGE_FONT_SHORT_BLOCK_MAX_CHARS
+            )
+
             page_layout_stats.append(
                 confidence.PageLayoutStats(
                     page_index=page.page_index,
@@ -188,6 +205,7 @@ def process_document(
                     avg_chars_per_block=avg_chars,
                     total_chars=total_chars_this_page,
                     font_size_ratio=font_size_ratio,
+                    large_short_block_count=large_short_count,
                 )
             )
 

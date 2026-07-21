@@ -193,12 +193,12 @@ class TestDecorativeLayoutSafetyCap:
         # Many separate, short blocks (<=20 chars each, so this matches
         # the "many short fragments" decorative-layout signature) whose
         # combined text nonetheless exceeds the auto-exclusion safety cap
-        # (confidence.MAX_CHARS_FOR_AUTO_EXCLUDE, 600 chars): ~60 blocks
-        # x ~13 chars each = ~690 chars total, comfortably over the cap.
-        for i in range(60):
-            c.setFont("Helvetica", 9)
-            c.drawString(72, y, f"Item {i:02d} text.")
-            y -= 14
+        # (confidence.MAX_CHARS_FOR_AUTO_EXCLUDE, 900 chars): 55 blocks
+        # x 20 chars each = 1100 chars total, comfortably over the cap.
+        for i in range(55):
+            c.setFont("Helvetica", 8)
+            c.drawString(72, y, f"Item number {i:02d} real.")
+            y -= 13
         c.showPage()
         c.save()
 
@@ -207,8 +207,8 @@ class TestDecorativeLayoutSafetyCap:
         assert result.auto_excluded_pages == []
         with open(result.output_path, encoding="utf-8") as f:
             text = f.read()
-        assert "Item 00" in text
-        assert "text." in text
+        assert "Item number 00" in text
+        assert "real." in text
         assert any(
             "was NOT auto-excluded" in r for r in result.flag_reasons
         ), result.flag_reasons

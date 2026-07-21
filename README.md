@@ -57,24 +57,34 @@ and uses that position information to distinguish real content from noise:
    for fully manual handling.
 7. **Auto-exclusion of unrecoverable decorative pages** (`pdf_extract/confidence.py`,
    wired through `pdf_extract/pipeline.py`) — a page whose surviving blocks
-   show a large font-size mix or many very short fragments (the geometric
-   signature of a title page, university crest/seal, or imprint block) is
-   automatically removed from the main output **if and only if** the total
-   text at stake is small (≤ 600 characters by default). This is the
-   right behavior for two reasons: such pages are rarely part of a
-   document's substantive content anyway, and some decorative layouts
-   (e.g. curved/circular text around a seal graphic) have no reading order
-   that can be reconstructed at all, so attempting to "fix" them just
-   produces confidently-wrong scrambled text -- worse for a downstream
-   embedding pipeline than simply not including it. Nothing is ever
-   silently lost: excluded pages' original text is written to a
-   `<name>.excluded.txt` sidecar file next to the main output, and the
+   show the geometric signature of a title page, university crest/seal, or
+   imprint block is automatically removed from the main output **if and
+   only if** the total text at stake is small (≤ 900 characters by
+   default). This is the right behavior for two reasons: such pages are
+   rarely part of a document's substantive content anyway, and some
+   decorative layouts (e.g. curved/circular text around a seal graphic)
+   have no reading order that can be reconstructed at all, so attempting
+   to "fix" them just produces confidently-wrong scrambled text -- worse
+   for a downstream embedding pipeline than simply not including it.
+   Nothing is ever silently lost: excluded pages' original text is written
+   to a `<name>.excluded.txt` sidecar file next to the main output, and the
    exclusion is recorded in `report.csv`. A page matching the same
    decorative signature but carrying *more* text than the safety threshold
    is flagged for manual review instead of being excluded, since at that
    point there's real content that shouldn't be dropped without a human
    look. Use `--keep-decorative-pages` to disable auto-exclusion entirely
    (pages will be flagged but left in the main output instead).
+
+   The detection signal itself was recalibrated after validating against a
+   batch of 21 real documents (see "Feedback loop" below): the original
+   version used a single whole-page max/min font-size ratio, which
+   produced false positives on completely ordinary pages -- any page with
+   one section heading above a paragraph and a footnote block naturally
+   has a large size ratio (one big heading vs. small footnote text) but is
+   not remotely decorative. The signal now specifically counts *multiple*
+   blocks that are both large relative to the page's dominant body-text
+   size AND short -- which is what an actual fragmented decorative title
+   looks like, and what a single normal heading does not.
 8. **Text-level artifact cleanup** (`pdf_extract/artifacts.py`) — applied to
    the final reassembled text, after layout-based cleanup:
    - **URLs** (`http://`, `https://`, and bare `www.` links, including ones
@@ -93,6 +103,20 @@ and uses that position information to distinguish real content from noise:
    "...malaise/.") is preserved. Each cleanup is independently toggleable
    via CLI flags (`--keep-urls`, `--keep-emails`, `--keep-separator-lines`)
    if you'd rather keep any of these for a different downstream use.
+
+   Also handled: when a URL or e-mail address sits on its own line
+   directly after an introducer phrase (common in letterheads/footnotes,
+   e.g. `"...Canada; e-mail: \n<address>"` or `"see our website at
+   \n<url>"`), removing the link would otherwise leave the introducer
+   phrase dangling with nothing after it. A small, deliberately narrow
+   list of specific link/contact-info introducers (`e-mail:`, `website
+   at`, `facebook:`, `twitter:`, etc.) is cleaned up in that case --
+   **only** when a link was actually found and removed on that pass, and
+   only for these specific unambiguous phrases. This is intentionally not
+   a general "strip trailing short word at end of line" rule, since real
+   prose legitimately word-wraps onto short words like "at" or "see" for
+   reasons unrelated to any link, and a generic rule would corrupt that
+   real content.
 9. **Confidence flagging** (`pdf_extract/confidence.py`) — every document is
    checked for low text yield, unusually high boilerplate removal, failed
    OCR, processing errors, or a decorative-layout page that couldn't be
@@ -213,6 +237,15 @@ See `samples/README.md` for more detail. This folder is for curated QA
 samples only -- keep your actual production batch of several hundred
 documents in your own local (gitignored) input/output directories.
 
+As of this writing, `samples/` contains a real 21-document batch (news
+articles, letters, and a report, all concerning the same real-world
+academic freedom case) that was used to recalibrate the decorative-layout
+detection and fix a URL-removal edge case -- both found by comparing real
+input PDFs against their real output `.txt` files, which is a much more
+reliable calibration signal than synthetic fixtures alone. If you add more
+real documents here over time, it's worth periodically re-running the
+full batch and skimming `report.csv` for newly-flagged documents.
+
 ## Testing
 
 The test suite runs against small synthetic PDF fixtures (generated with
@@ -268,9 +301,10 @@ python -m pytest tests/ -v
   via an `overrides.yaml` rule (or a small addition to that list) than by
   guessing.
 - The auto-exclusion safety threshold
-  (`confidence.MAX_CHARS_FOR_AUTO_EXCLUDE`, default 600 characters) is a
-  single global constant. If your batch includes unusually dense
-  decorative pages that legitimately exceed this while still being pure
-  noise, or conversely if you'd rather be more conservative, this is a
-  one-line change -- flag it and we can tune it or make it configurable
-  per-run.
+  (`confidence.MAX_CHARS_FOR_AUTO_EXCLUDE`, default 900 characters,
+  calibrated against real title/acknowledgements pages -- see "Feedback
+  loop" above) is a single global constant. If your batch includes
+  unusually dense decorative pages that legitimately exceed this while
+  still being pure noise, or conversely if you'd rather be more
+  conservative, this is a one-line change -- flag it and we can tune it
+  or make it configurable per-run.

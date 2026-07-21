@@ -43,11 +43,34 @@ MIN_CONTRIBUTING_PAGE_FRACTION = 0.5
 # and both correlate strongly with the "torn words" garbling seen when
 # such a page's blocks are reassembled into reading order. Pages matching
 # either signal are flagged so a human can confirm the output is correct.
+#
+# NOTE: an earlier version of this module used a single "max/min font
+# size ratio across the whole page" signal. That produced false positives
+# on completely ordinary pages: a normal page with one short section
+# heading (e.g. 26pt) next to a long paragraph and a footnote block
+# (e.g. 8.5-11pt) has a font-size ratio around 3.0 purely because *one*
+# heading is much larger than the body text -- exactly what a normal
+# document looks like, not a decorative layout. The distinguishing signal
+# for an actual decorative page turns out to be that *multiple* short
+# blocks sit at a much larger font size than the page's dominant body
+# text (a title broken into several oversized pieces), not just one.
 
-# If the ratio between the largest and smallest average font size among a
-# page's blocks exceeds this, the page mixes markedly different text
-# sizes (e.g. a big title next to normal-sized body/byline text).
-MAX_FONT_SIZE_RATIO = 2.2
+# A block counts as "large" if its font size is at least this many times
+# the page's dominant body-text font size (the font size of whichever
+# surviving block has the most characters -- i.e. the actual paragraph
+# text, which is what "font size relative to body text" should be judged
+# against).
+LARGE_FONT_MULTIPLIER = 1.8
+
+# A "large" block is only suspicious if it's also short -- a single long
+# large-font heading is normal; several short large-font fragments are
+# the decorative-title signature.
+LARGE_FONT_SHORT_BLOCK_MAX_CHARS = 15
+
+# At least this many large-and-short blocks must be present to flag a
+# page. A single oversized heading block (count=1) is completely normal
+# and must not trigger this.
+MIN_LARGE_SHORT_BLOCKS = 2
 
 # A page with at least this many blocks...
 FRAGMENTED_BLOCK_MIN_COUNT = 8
@@ -55,16 +78,28 @@ FRAGMENTED_BLOCK_MIN_COUNT = 8
 FRAGMENTED_BLOCK_MAX_AVG_CHARS = 20
 # ...is considered fragmented into decorative pieces rather than normal
 # paragraphs (which are typically well over 100 characters per block).
+# This signal alone already catches title pages where the whole title AND
+# byline/date/author block are all broken into many small pieces.
 
 # Safety cap for automatic exclusion (see pipeline.py): a page is only
 # ever *auto-excluded* from output (as opposed to merely flagged) if its
 # surviving text totals no more than this many characters. Genuine
 # decorative pages (a title, a crest/seal rendered as scattered text
-# fragments, an imprint block) are almost always well under this. A page
-# with substantially more text that happens to also match one of the
-# decorative signals (e.g. a numbered list of short findings) is flagged
-# for a human to check, but its content is never silently dropped.
-MAX_CHARS_FOR_AUTO_EXCLUDE = 600
+# fragments, an imprint block, an acknowledgements section with a second
+# duplicated rendering of the title) are almost always well under this.
+# A page with substantially more text that happens to also match one of
+# the decorative signals (e.g. a numbered list of short findings) is
+# flagged for a human to check, but its content is never silently dropped.
+#
+# Calibrated against real title/acknowledgements pages observed in
+# practice: a two-page decorative front section (title page + an
+# acknowledgements page that also re-renders the title as a second
+# fragmented decorative element) had totals of ~190 and ~650 characters
+# respectively. The cap is set with headroom above that observed range
+# rather than exactly at it, since decorative pages vary in how much
+# text they carry (e.g. a longer acknowledgements paragraph, additional
+# imprint/copyright boilerplate).
+MAX_CHARS_FOR_AUTO_EXCLUDE = 900
 
 
 @dataclass
@@ -79,23 +114,33 @@ class ConfidenceReport:
 
 @dataclass
 class PageLayoutStats:
-    """Minimal per-page geometry summary used for decorative-layout
-    detection. Built by the pipeline from the blocks that survived
-    boilerplate/chrome removal (not the raw page), so a page's own
-    running-header font size, if any, doesn't skew the ratio."""
+    """Per-page geometry summary used for decorative-layout detection.
+    Built by the pipeline from the blocks that survived boilerplate/chrome
+    removal (not the raw page), so a page's own running-header font size,
+    if any, doesn't skew the numbers.
+
+    ``large_short_block_count`` -- rather than a single whole-page
+    max/min font-size ratio (which false-positives on an ordinary page
+    with one heading), this counts blocks that are BOTH large relative
+    to the page's dominant body-text font size AND short. Multiple such
+    blocks is the actual signature of a fragmented decorative title; a
+    single such block is just a normal section heading.
+    """
 
     page_index: int
     block_count: int
     avg_chars_per_block: float
     total_chars: int
-    font_size_ratio: float  # max avg_font_size / min avg_font_size across blocks
+    font_size_ratio: float  # max avg_font_size / min avg_font_size across blocks (kept for diagnostics)
+    large_short_block_count: int = 0
 
 
 def is_decorative_layout_page(stats: "PageLayoutStats") -> bool:
     """True if this page's surviving blocks match one of the geometric
-    signatures of a decorative layout (large font-size mix, or many very
-    short fragments) -- see module docstring for detail and rationale."""
-    if stats.font_size_ratio >= MAX_FONT_SIZE_RATIO:
+    signatures of a decorative layout (multiple oversized-and-short
+    blocks, or many very short fragments overall) -- see module docstring
+    for detail and rationale."""
+    if stats.large_short_block_count >= MIN_LARGE_SHORT_BLOCKS:
         return True
     if (
         stats.block_count >= FRAGMENTED_BLOCK_MIN_COUNT
