@@ -83,7 +83,8 @@ topic_model = BERTopic(embedding_model=embedding_model,
                            vectorizer_model=vectorizer_model,
                            representation_model=representation_model,
                            min_topic_size=3,
-                           top_n_words=5)
+                           top_n_words=15,
+                           calculate_probabilities=True)
 
 # Run the topic model
 topics, probs = topic_model.fit_transform(descriptions)
@@ -91,7 +92,7 @@ topics, probs = topic_model.fit_transform(descriptions)
 # Combine topics where possible
 topic_model.reduce_topics(
     descriptions,
-    nr_topics="auto"
+    nr_topics=None
 )
 
 # Visualize Embeddings
