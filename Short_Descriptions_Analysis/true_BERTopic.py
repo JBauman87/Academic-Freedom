@@ -17,6 +17,11 @@ descriptions = df["Description of case"]
 descriptions = descriptions.to_list()
 descriptions.pop(-1) #temporary (removing an empty description)
 
+## Retrieve employee names (labels), kept aligned with descriptions above
+employee_names = df["EMPLOYEE NAME"]
+employee_names = employee_names.to_list()
+employee_names.pop(-1) #temporary (removing the label for the empty description)
+
 # Initialize Models
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -95,7 +100,7 @@ fig.show()
 
 # Retrieve topic modelling results
 topic_info = topic_model.get_topic_info()
-doc_info = topic_model.get_document_info(descriptions)
+doc_info = topic_model.get_document_info(descriptions, metadata={"Employee Name": employee_names})
 
 # Save results to Excel file
 with pd.ExcelWriter("BERTopic_results_2.xlsx") as writer:
