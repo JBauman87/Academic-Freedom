@@ -44,7 +44,8 @@ def bertopic(descriptions: list[str], embeddings:np.ndarray, seed: int, min_clus
 
     # Instantiate clustering model
     hdbscan_model = HDBSCAN(
-        min_cluster_size= min_cluster_size, #3
+        min_cluster_size = min_cluster_size, #3
+        min_samples = 2,
         metric='euclidean',
         cluster_selection_method='eom'
     )
@@ -100,15 +101,14 @@ def bertopic(descriptions: list[str], embeddings:np.ndarray, seed: int, min_clus
                                umap_model=umap_model,
                                vectorizer_model=vectorizer_model,
                                representation_model=representation_model,
-                               min_topic_size= 3, #manually adjust
-                               top_n_words=15, #manually adjust
+                               top_n_words=5, #manually adjust
                                calculate_probabilities=False)
 
     # Run the topic model
     topics, probs = topic_model.fit_transform(descriptions, embeddings)
 
-
     #****** Results ******
+
     # Initialize dictionary of results
     run_results = {
         "seed": seed,
@@ -121,54 +121,48 @@ def bertopic(descriptions: list[str], embeddings:np.ndarray, seed: int, min_clus
         "topics": {},
     }
 
-
-
-
-
-
     # Retrieve topic info
     topic_info = topic_model.get_topic_info()
-    # Topic counts (number of docs in topic)
+    topic_info = topic_info[topic_info["Topic"] != -1].reset_index(drop=True)
+
+    # Collect number of topics and add to dictionary
+    topic_indices = topic_info["Topic"]
+    n_topics = len(topic_indices)
+    run_results["n_topics"] = n_topics
+
+    # Save topic document assignments to dictionary
+    run_results["document_topics"] = [int(t) for t in topics]
+
+    # Collect number of outliers and add to dictionary
+    n_outliers = int(np.sum(np.asarray(topics) == -1))
+    run_results["n_outliers"] = n_outliers
+
+    # Prepare lists for iteration
+
+    ## Collect topic counts (number of docs in topic)
     topic_counts = topic_info["Count"]
+    topic_words = topic_info["Representation"]
 
-    # Find unique topic indices
-    unique_topics = list(set(topics))
-    topic_nums = topic_info["Topic"]
-    print("are they equal?", unique_topics, topic_nums)
-    # remove -1 topic
-    unique_topics.pop(0)
+    # Iterate over each topic
+    for topic_id in range(n_topics):
+        # Number of docs in topic
+        count = topic_counts[topic_id].item() # convert from np.int64 to int
+        # Representative words for topic
+        words = topic_words[topic_id]
+        # Indices of docs in topic
+        topic_docs = []
+        for t in range(len(topics)):
+            if topics[t] == topic_id:
+                topic_docs.append(t)
+        # Save info to dictionary entry
+        run_results["topics"][str(topic_id)] = {
+            "doc_count": count,
+            "representative_words": words,
+            "doc_indices": topic_docs
+        }
 
-    # Collect info for each topic
-    for topic_id in unique_topics:
-        # *** Find Info ***
-        # Topic count
-        count = topic_counts[topic_id]
-        # Topic words and weights
-        words_weights = topic_model.get_topic(topic_id)
-        words = []
-        weights = []
-        for word, weight in words_weights.items():
-            words.append(word)
-            weights.append(weight)
-        # Indices of the documents in the topic
-        indices = np.where(np.array(topics) == topic_id)[0]
-        # Find the centroid of the topic
-        centroid = embeddings[indices].mean(axis=0)
-        centroid = centroid / np.linalg.norm(centroid) # normalize
+    return run_results
 
-        # *** Save Results ***
-        # Organize topic results into a dictionary
-        run_results['topics'][topic_id] = {
-                                            "words": words,
-                                            "weights": weights,
-                                            "centroid": centroid,
-                                            "count": count,
-                                            "doc_indices": indices
-                                            }
 
-    # Save results in a .pkl file
-    filename = "run"+str(counter)
-    with open(r"C:/Users/jordanbauman/Library/CloudStorage/OneDrive-UniversityofWaterloo/'Academic Freedom RA'/Code/"
-              r"Academic-Freedom/Short_Descriptions_Analysis/topic_results"+filename+".pkl", "wb") as f:
-        pickle.dump(run_results, f)
+print(bertopic(descriptions, embeddings, 42,3,10,5))
 

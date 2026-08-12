@@ -89,12 +89,6 @@ topic_model = BERTopic(embedding_model=embedding_model,
 # Run the topic model
 topics, probs = topic_model.fit_transform(descriptions)
 
-# Combine topics where possible
-topic_model.reduce_topics(
-    descriptions,
-    nr_topics="auto"
-)
-
 # Visualize Embeddings
 fig = topic_model.visualize_documents(descriptions)
 fig.show()
