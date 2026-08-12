@@ -38,7 +38,8 @@ umap_model = UMAP(
     n_neighbors=10,
     n_components=5,
     min_dist=0.1,
-    metric='cosine'
+    metric='cosine',
+    random_state=42
 )
 
 # Instantiate representation model. Extracts keywords
@@ -103,6 +104,6 @@ topic_info = topic_model.get_topic_info()
 doc_info = topic_model.get_document_info(descriptions, metadata={"Employee Name": employee_names})
 
 # Save results to Excel file
-with pd.ExcelWriter("BERTopic_results_2.xlsx") as writer:
+with pd.ExcelWriter("BERTopic_results_3.xlsx") as writer:
     topic_info.to_excel(writer, sheet_name="Topics", index=False)
     doc_info.to_excel(writer, sheet_name="Documents", index=False)
