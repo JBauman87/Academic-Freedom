@@ -228,7 +228,7 @@ def docs_compare(reference_seed: int, comparison_seed: int, reference_topic: int
     }
     return comparison
 
-# define a function that compares each seed run to the reference seed run and finds the best topic similarities for
+# a function that compares each seed run to the reference seed run and finds the best topic similarities for
 # each seed comparison
 def topics_compare(results: dict, seeds: list[int]):
     # define reference seed
@@ -250,9 +250,75 @@ def topics_compare(results: dict, seeds: list[int]):
             # append results to dict
             all_comparisons[seed][topic] = single_comparison
 
-    return all_comparisons
+    # convert all_comparisons dictionary to a df
+    comparison_df = pd.concat(
+        {
+            seed: pd.DataFrame.from_dict(topics, orient="index")
+            for seed, topics in all_comparisons.items()
+        },
+        names=["comparison_seed", "reference_topic"],
+    ).reset_index()
 
+    return all_comparisons, comparison_df
 
+# a function that compiles a dictionary of words and their frequencies that appears under each reference topic
+def stable_rep_words(results: dict, all_comparisons: dict, seeds: list[int]):
+    # retrieve reference seed
+    reference_seed = seeds[0]
+    # retrieve refence topics
+    reference_topics = results[reference_seed]["topics"]
 
+    # initialize a dictionary to contain the representative words for each refence topic
+    word_results = {}
 
+    # iterate over all the seeds
+    for seed in results.keys():
+        # iterate over the reference seed topics
+        for topic in reference_topics.keys():
+            # create entry for the current topic if necessary
+            if topic not in word_results:
+                word_results[topic] = {}
+            # find the representative words of best matching topic if on a comparison seed
+            if seed != reference_seed:
+                # best matching topics
+                comparison_topic = all_comparisons[seed][topic]["best_match"]
+                # representative words
+                words = results[seed]["topics"][comparison_topic]["representative_words"]
+            # collect representative words if on reference seed
+            else:
+                words = results[seed]["topics"][topic]["representative_words"]
+            # iterate over representative words
+            for word in words:
+                # increase word count if the word is recorded under the current topic
+                if word in word_results[topic].keys():
+                    word_results[topic][word] += 1
+                # add word to dict if the word is not recorded under the current topic
+                else:
+                    word_results[topic][word] = 1
 
+    # iterate over topics in results dictionary
+    for topic in word_results.keys():
+        # iterate over words in the current topic
+        for word in word_results[topic].keys():
+            # grab word count
+            count = word_results[topic][word]
+            # transform each entry into a list containing the word count and proportion of seeds it appear under
+            word_results[topic][word] = [count, count/len(seeds)]
+
+    # save word_results as a df
+    word_df = pd.concat(
+        {
+            topic: pd.DataFrame.from_dict(
+                words, orient="index", columns=["seed_count", "seed_proportion"]
+            )
+            for topic, words in word_results.items()
+        },
+        names=["reference_topic", "word"],
+    ).reset_index()
+    
+    # sort df so that most stable result appear first
+    word_df = word_df.sort_values(
+        ["reference_topic", "seed_proportion"], ascending=[True, False]
+    ).reset_index(drop=True)
+
+    return word_results, word_df
