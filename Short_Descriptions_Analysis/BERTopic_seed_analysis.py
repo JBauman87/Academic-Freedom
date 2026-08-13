@@ -11,16 +11,16 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
 # Constants
-seeds = [42,12,43,28,46,76,100,92,68,35,66] #reference seed first
+SEEDS = [42,12,43,28,46,76,100,92,68,35,66] #reference seed first
 
 ## Read in Excel file
 file_path = 'af_coding.xlsx'
 df = pd.read_excel(file_path, sheet_name="Cases")
 
 ## Retrieve descriptions
-descriptions = df["Description of case"]
-descriptions = descriptions.to_list()
-descriptions.pop(-1) #temporary (removing an empty description)
+DESCRIPTIONS = df["Description of case"]
+DESCRIPTIONS = DESCRIPTIONS.to_list()
+DESCRIPTIONS.pop(-1) #temporary (removing an empty description)
 
 ## Retrieve employee names (labels), kept aligned with descriptions above
 employee_names = df["EMPLOYEE NAME"]
@@ -31,8 +31,8 @@ employee_names.pop(-1) #temporary (removing the label for the empty description)
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Embed descriptions
-embeddings = embedding_model.encode(
-    descriptions,
+EMBEDDINGS = embedding_model.encode(
+    DESCRIPTIONS,
     show_progress_bar=True,
     normalize_embeddings=True
 )
@@ -316,9 +316,64 @@ def stable_rep_words(results: dict, all_comparisons: dict, seeds: list[int]):
         names=["reference_topic", "word"],
     ).reset_index()
     
-    # sort df so that most stable result appear first
+    # sort df so that reference topics appear in order and most stable words appear first
     word_df = word_df.sort_values(
         ["reference_topic", "seed_proportion"], ascending=[True, False]
     ).reset_index(drop=True)
 
     return word_results, word_df
+
+
+# ******** Execution *********
+
+if __name__ == "__main__":
+
+    print("Starting seed sensitivity analysis...")
+
+    # Run BERTopic across seeds
+    RESULTS = run_seed_analysis(
+        DESCRIPTIONS,
+        EMBEDDINGS,
+        SEEDS,
+        min_cluster_size=3,
+        n_neighbors=10,
+        n_components=5
+    )
+
+    print("Matching topics across runs...")
+
+    # Match topics across seeds
+    ALL_COMPARISONS, COMPARISON_DF = topics_compare(
+        RESULTS,
+        SEEDS
+    )
+
+    print("Calculating representative word stability...")
+
+    # Calculate stable representative words
+    WORD_RESULTS, WORD_DF = stable_rep_words(
+        RESULTS,
+        ALL_COMPARISONS,
+        SEEDS
+    )
+
+    print("Analysis complete.")
+
+    with pd.ExcelWriter(
+        "seed_stability_analysis.xlsx",
+        engine="openpyxl"
+    ) as writer:
+
+        COMPARISON_DF.to_excel(
+            writer,
+            sheet_name="Topic Comparisons",
+            index=False
+        )
+
+        WORD_DF.to_excel(
+            writer,
+            sheet_name="Word Stability",
+            index=False
+        )
+
+    print("Results saved.")
