@@ -1,5 +1,6 @@
 # Import packages
 import pandas as pd
+import pickle as pkl
 import numpy as np
 from bertopic import BERTopic
 from sentence_transformers import SentenceTransformer
@@ -10,9 +11,9 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
 # Constants
-seeds = [42,12,43,28,46,76,100,92,68,35,66]
+seeds = [42,12,43,28,46,76,100,92,68,35,66] #reference seed first
 
-# Read in Excel file
+## Read in Excel file
 file_path = 'af_coding.xlsx'
 df = pd.read_excel(file_path, sheet_name="Cases")
 
@@ -36,8 +37,9 @@ embeddings = embedding_model.encode(
     normalize_embeddings=True
 )
 
-# ********** BERTopic Loop **********
+# ********** BERTopic **********
 
+# A function for one BERTopic run
 def bertopic(descriptions: list[str], embeddings:np.ndarray, seed: int, min_cluster_size: int,  n_neighbors: int,n_components: int):
     #****** Topic Modelling ******
 
@@ -154,7 +156,7 @@ def bertopic(descriptions: list[str], embeddings:np.ndarray, seed: int, min_clus
             if topics[t] == topic_id:
                 topic_docs.append(t)
         # Save info to dictionary entry
-        run_results["topics"][str(topic_id)] = {
+        run_results["topics"][topic_id] = {
             "doc_count": count,
             "representative_words": words,
             "doc_indices": topic_docs
@@ -162,6 +164,95 @@ def bertopic(descriptions: list[str], embeddings:np.ndarray, seed: int, min_clus
 
     return run_results
 
+# A function for running BERTopic by iterating over the seeds
+def run_seed_analysis(descriptions: list[str], embeddings:np.ndarray, seeds: list[int], min_cluster_size: int,  n_neighbors: int,n_components: int):
+    # Instantiate a dictionary for the results of each seed run
+    results = {}
+    # Iterate over the seeds
+    for seed in seeds:
+        # Run BERTopic for the current seed
+        run_result = bertopic(descriptions, embeddings, seed, min_cluster_size, n_neighbors, n_components)
+        # Save the results in the dictionary
+        results[seed] = run_result
 
-print(bertopic(descriptions, embeddings, 42,3,10,5))
+    with open("seed_stability_results.pkl", "wb") as f:
+        pkl.dump(results, f)
+    
+    return results
+
+# define jaccard similarity helper function
+def jaccard(words1: list, words2: list):
+
+    words1 = set(words1)
+    words2 = set(words2)
+
+    intersection = words1.intersection(words2)
+    union = words1.union(words2)
+
+    return len(intersection) / len(union)
+
+# A function for comparing all the topics of one seed against one topic of a reference seed
+def docs_compare(reference_seed: int, comparison_seed: int, reference_topic: int, results: dict):
+    # collect the indices of the docs in the reference topic of the reference seed
+    reference_docs = set(results[reference_seed]["topics"][reference_topic]["doc_indices"])
+    # initialize a dictionary to hold the number of common docs for each comparison
+    comparisons = {}
+    # loop over the topics in the comparison seed
+    for topic in results[comparison_seed]["topics"]:
+        # retrieve the doc indices for the current comparison topic
+        comparison_docs = set(results[comparison_seed]["topics"][topic]["doc_indices"])
+        # find the common docs between the topics
+        common_docs = comparison_docs.intersection(reference_docs)
+        # add the number of common docs to the output dictionary
+        comparisons[topic] = len(common_docs)
+
+    # find the topic that shares the most docs with the reference topic
+    best_match = max(comparisons, key=comparisons.get)
+    # extract shared doc count
+    best_overlap = comparisons[best_match]
+    # Calculate preservation ratio = # overlapping docs / # docs in reference topic
+    preservation = best_overlap/(results[reference_seed]["topics"][reference_topic]["doc_count"])
+    # retrieve representative words for the reference topic
+    reference_words = results[reference_seed]["topics"][reference_topic]["representative_words"]
+    # retrieve representative words for the best identified comparison topic
+    comparison_words = results[comparison_seed]["topics"][best_match]["representative_words"]
+    # Calculate jaccard similarity between representative words
+    word_jaccard = jaccard(reference_words, comparison_words)
+
+    # initialize results dictionary
+    comparison = {
+        "best_match": best_match, # best matching topic in the comparison seed
+        "best_overlap": best_overlap, # number of overlapping topics
+        "preservation": preservation,
+        "word_jaccard": word_jaccard
+    }
+    return comparison
+
+# define a function that compares each seed run to the reference seed run and finds the best topic similarities for
+# each seed comparison
+def topics_compare(results: dict, seeds: list[int]):
+    # define reference seed
+    reference_seed = seeds[0]
+    # retrieve the topic indices for the reference seed
+    reference_topics = results[reference_seed]["topics"]
+
+    # initialize dict for all topic comparisons
+    all_comparisons = {}
+
+    # iterate over comparison seeds
+    for seed in seeds[1:]:
+        # initialize dictionary entry for seed
+        all_comparisons[seed] = {}
+        # iterate over reference seed topics
+        for topic in reference_topics:
+            # run a comparison between the reference and comparison seeds for the current topic
+            single_comparison = docs_compare(reference_seed, seed, topic, results)
+            # append results to dict
+            all_comparisons[seed][topic] = single_comparison
+
+    return all_comparisons
+
+
+
+
 
