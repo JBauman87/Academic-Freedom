@@ -1,6 +1,5 @@
 # Import packages
 import pandas as pd
-import pickle as pkl
 import numpy as np
 from bertopic import BERTopic
 from sentence_transformers import SentenceTransformer
@@ -9,9 +8,45 @@ from umap import UMAP
 from bertopic.representation import KeyBERTInspired
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+from itertools import product
+from gensim.models import CoherenceModel
+from gensim.corpora import Dictionary
+import argparse
+
+# Usage
+## For optimizing
+# python BERTopic_seed_analysis.py optimize
+## For seed stability analysis
+# python BERTopic_seed_analysis.py stability
 
 # Constants
 SEEDS = [42,12,43,28,46,76,100,92,68,35,66] #reference seed first
+
+# Custom stopwords for exclusion (in most documents, not salient)
+CUSTOM_STOPWORDS = {
+    "professor",
+    "professors",
+    "dr",
+    "university",
+    "universities",
+    "faculty",
+    "academic",
+    "student",
+    "students",
+    "department",
+    "college",
+    "campus",
+    "research",
+    "case",
+    "made",
+    "comments",
+    "regarding",
+    "following",
+    "position"
+}
+
+# Merge to form complete list of stopwords
+ALL_STOPWORDS = list(ENGLISH_STOP_WORDS.union(CUSTOM_STOPWORDS))
 
 ## Read in Excel file
 file_path = 'af_coding.xlsx'
@@ -63,35 +98,9 @@ def bertopic(descriptions: list[str], embeddings:np.ndarray, seed: int, min_clus
     # Instantiate representation model. Extracts keywords
     representation_model = None #KeyBERTInspired()
 
-    # Define custom stopwords for exclusion (in most documents, not salient)
-    custom_stopwords = {
-        "professor",
-        "professors",
-        "dr",
-        "university",
-        "universities",
-        "faculty",
-        "academic",
-        "student",
-        "students",
-        "department",
-        "college",
-        "campus",
-        "research",
-        "case",
-        "made",
-        "comments",
-        "regarding",
-        "following",
-        "position"
-    }
-
-    # Merge to form complete list of stopwords
-    all_stopwords = list(ENGLISH_STOP_WORDS.union(custom_stopwords))
-
     # Instantiate vectorizer with all stopwords
     vectorizer_model = CountVectorizer(
-        stop_words=all_stopwords,
+        stop_words=ALL_STOPWORDS,
         ngram_range=(1, 2),
         min_df=2 #word must appear in X documents, set manually
     )
@@ -174,9 +183,6 @@ def run_seed_analysis(descriptions: list[str], embeddings:np.ndarray, seeds: lis
         run_result = bertopic(descriptions, embeddings, seed, min_cluster_size, n_neighbors, n_components)
         # Save the results in the dictionary
         results[seed] = run_result
-
-    with open("seed_stability_results.pkl", "wb") as f:
-        pkl.dump(results, f)
     
     return results
 
@@ -324,56 +330,236 @@ def stable_rep_words(results: dict, all_comparisons: dict, seeds: list[int]):
     return word_results, word_df
 
 
+# ********* Parameter Optimization **********
+
+# a helper function to collect all the valid tokens in the all the documents
+def coherence_tokens(descriptions, stopwords):
+
+    # Instantiate vectorizer
+    vectorizer = CountVectorizer(
+        stop_words=stopwords,
+        ngram_range=(1, 2),
+        min_df=2
+    )
+
+    # Fit the vectorizer to the documents
+    vectorizer.fit(descriptions)
+
+    # instantiate an analyzer from the vectorizer
+    analyzer = vectorizer.build_analyzer()
+
+    # create valid vocabulary set
+    vocabulary = set(
+        vectorizer.get_feature_names_out()
+    )
+
+    # instantiate list for the valid tokens in the documents
+    tokens = []
+
+    # iterate over the documents
+    for doc in descriptions:
+
+        # collect all the tokens in the current doc
+        doc_tokens = analyzer(doc)
+
+        # pull out the valid tokens from the token list
+        valid_tokens = [
+            token
+            for token in doc_tokens
+            if token in vocabulary
+        ]
+
+        # add the valid tokens to the overall valid tokens list
+        tokens.append(valid_tokens)
+
+    return tokens
+
+# a function to sample outputs with one seed and various combinations of min_cluster_sizes and n_neighbors_values
+def optimize_parameters(
+    descriptions,
+    embeddings,
+    min_cluster_sizes,
+    n_neighbors_values,
+    n_components=5,
+    seed=42
+):
+
+    # tokenize documents for input to the coherence calculation
+    tokenized_docs = coherence_tokens(
+        descriptions,
+        ALL_STOPWORDS
+    )
+
+    # instantiate a dictionary of the tokens
+    dictionary = Dictionary(tokenized_docs)
+
+    # instantiate an iterator over the grid of all possible hyperparameter combinations
+    parameter_grid = product(
+        min_cluster_sizes,
+        n_neighbors_values
+    )
+
+    # instantiate a list to hold the results of each run for each hyperparameter combination
+    optimization_results = []
+
+    # iterate over the hyperparameter combinations
+    for min_size, neighbors in parameter_grid:
+
+        print(
+            f"Testing cluster={min_size}, "
+            f"neighbors={neighbors}"
+        )
+
+        # collect BERTopic result
+        run_result = bertopic(
+            descriptions,
+            embeddings,
+            seed,
+            min_size,
+            neighbors,
+            n_components
+        )
+
+        # Instantiate a list to hold valid representative topic words
+        topic_words = []
+
+        # Iterate over topics produced by the BERTopic run
+        for topic in run_result["topics"]:
+
+            # collect representative words for the current topic
+            words = run_result["topics"][topic]["representative_words"]
+
+            # find valid words for the current topic by matching against tokenized words
+            valid_words = [
+                word for word in words
+                if word in dictionary.token2id
+            ]
+
+            # If there are enough valid words in the topic (>=2 for coherence) add them to the list of topic words
+            if len(valid_words) >= 2:
+                topic_words.append(valid_words)
+
+        # run the coherence model
+        coherence_model = CoherenceModel(
+            topics=topic_words,
+            texts=tokenized_docs,
+            dictionary=dictionary,
+            coherence="c_v"
+        )
+
+        # retrieve results of the coherence model
+        coherence = coherence_model.get_coherence()
+
+        # Calculate the proportion of outliers in the BERTopic run
+        outlier_prop = (run_result["n_outliers"]/run_result["n_documents"])
+
+        # append the hyperparameters and results to the output list
+        optimization_results.append({
+            "min_cluster_size": min_size,
+            "n_neighbors": neighbors,
+            "n_components": n_components,
+            "n_topics": run_result["n_topics"],
+            "n_outliers": run_result["n_outliers"],
+            "outlier_proportion": outlier_prop,
+            "coherence_cv": coherence
+        })
+
+    # convert output list to a df
+    optimization_df = pd.DataFrame(
+        optimization_results
+    )
+
+    # sort the output df by coherence
+    optimization_df = optimization_df.sort_values(
+        "coherence_cv",
+        ascending=False
+    ).reset_index(drop=True)
+
+    return optimization_df
+
+
 # ******** Execution *********
 
 if __name__ == "__main__":
 
-    print("Starting seed sensitivity analysis...")
+    # instantiate argument parser for command line options
+    parser = argparse.ArgumentParser()
 
-    # Run BERTopic across seeds
-    RESULTS = run_seed_analysis(
-        DESCRIPTIONS,
-        EMBEDDINGS,
-        SEEDS,
-        min_cluster_size=3,
-        n_neighbors=10,
-        n_components=5
+    # specify command line arguments
+    parser.add_argument(
+        "mode",
+        choices=["optimize", "stability"],
+        help="Choose which analysis to run",
     )
 
-    print("Matching topics across runs...")
+    args = parser.parse_args()
 
-    # Match topics across seeds
-    ALL_COMPARISONS, COMPARISON_DF = topics_compare(
-        RESULTS,
-        SEEDS
-    )
+    # ************ Optimizing hyperparameters **********
+    if args.mode == "optimize":
+        print("Starting parameter optimization...")
 
-    print("Calculating representative word stability...")
-
-    # Calculate stable representative words
-    WORD_RESULTS, WORD_DF = stable_rep_words(
-        RESULTS,
-        ALL_COMPARISONS,
-        SEEDS
-    )
-
-    print("Analysis complete.")
-
-    with pd.ExcelWriter(
-        "seed_stability_analysis.xlsx",
-        engine="openpyxl"
-    ) as writer:
-
-        COMPARISON_DF.to_excel(
-            writer,
-            sheet_name="Topic Comparisons",
-            index=False
+        OPTIMIZATION_DF = optimize_parameters(
+            DESCRIPTIONS,
+            EMBEDDINGS,
+            min_cluster_sizes=[3, 5, 8],
+            n_neighbors_values=[10, 15],
+            n_components=5,
+            seed=42,
         )
 
-        WORD_DF.to_excel(
-            writer,
-            sheet_name="Word Stability",
-            index=False
+        OPTIMIZATION_DF.to_excel("parameter_optimization.xlsx", index=False)
+
+        print("Parameter optimization complete.")
+    
+    # *************** Seed sensitivity analysis ***************
+    elif args.mode == "stability":
+
+        print("Starting seed sensitivity analysis...")
+
+        # Run BERTopic across seeds
+        RESULTS = run_seed_analysis(
+            DESCRIPTIONS,
+            EMBEDDINGS,
+            SEEDS,
+            min_cluster_size=3, #CHANGE HERE
+            n_neighbors=10, #CHANGE HERE
+            n_components=5 #CHANGE HERE
         )
 
-    print("Results saved.")
+        print("Matching topics across runs...")
+
+        # Match topics across seeds
+        ALL_COMPARISONS, COMPARISON_DF = topics_compare(
+            RESULTS,
+            SEEDS
+        )
+
+        print("Calculating representative word stability...")
+
+        # Calculate stable representative words
+        WORD_RESULTS, WORD_DF = stable_rep_words(
+            RESULTS,
+            ALL_COMPARISONS,
+            SEEDS
+        )
+
+        print("Analysis complete.")
+
+        with pd.ExcelWriter(
+            "seed_stability_analysis.xlsx",
+            engine="openpyxl"
+        ) as writer:
+
+            COMPARISON_DF.to_excel(
+                writer,
+                sheet_name="Topic Comparisons",
+                index=False
+            )
+
+            WORD_DF.to_excel(
+                writer,
+                sheet_name="Word Stability",
+                index=False
+            )
+
+        print("Results saved.")
