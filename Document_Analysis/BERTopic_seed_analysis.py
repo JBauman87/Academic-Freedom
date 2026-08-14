@@ -12,6 +12,8 @@ from itertools import product
 from gensim.models import CoherenceModel
 from gensim.corpora import Dictionary
 import argparse
+from pathlib import Path
+
 
 # Usage
 ## For optimizing
@@ -51,7 +53,7 @@ ALL_STOPWORDS = list(ENGLISH_STOP_WORDS.union(CUSTOM_STOPWORDS))
 # ********** BERTopic **********
 
 # A function for one BERTopic run
-def bertopic(descriptions: list[str], embeddings:np.ndarray, seed: int, min_cluster_size: int,  n_neighbors: int,n_components: int):
+def bertopic(documents: list[str], embeddings:np.ndarray, seed: int, min_cluster_size: int,  n_neighbors: int,n_components: int):
     #****** Topic Modelling ******
 
     # Instantiate clustering model
@@ -91,7 +93,7 @@ def bertopic(descriptions: list[str], embeddings:np.ndarray, seed: int, min_clus
                                calculate_probabilities=False)
 
     # Run the topic model
-    topics, probs = topic_model.fit_transform(descriptions, embeddings)
+    topics, probs = topic_model.fit_transform(documents, embeddings)
 
     #****** Results ******
 
@@ -103,7 +105,7 @@ def bertopic(descriptions: list[str], embeddings:np.ndarray, seed: int, min_clus
             "n_neighbors": n_neighbors,
             "n_components": n_components,
         },
-        "n_documents": len(descriptions),
+        "n_documents": len(documents),
         "topics": {},
     }
 
@@ -150,13 +152,13 @@ def bertopic(descriptions: list[str], embeddings:np.ndarray, seed: int, min_clus
     return run_results
 
 # A function for running BERTopic by iterating over the seeds
-def run_seed_analysis(descriptions: list[str], embeddings:np.ndarray, seeds: list[int], min_cluster_size: int,  n_neighbors: int,n_components: int):
+def run_seed_analysis(documents: list[str], embeddings:np.ndarray, seeds: list[int], min_cluster_size: int,  n_neighbors: int,n_components: int):
     # Instantiate a dictionary for the results of each seed run
     results = {}
     # Iterate over the seeds
     for seed in seeds:
         # Run BERTopic for the current seed
-        run_result = bertopic(descriptions, embeddings, seed, min_cluster_size, n_neighbors, n_components)
+        run_result = bertopic(documents, embeddings, seed, min_cluster_size, n_neighbors, n_components)
         # Save the results in the dictionary
         results[seed] = run_result
     
@@ -309,7 +311,7 @@ def stable_rep_words(results: dict, all_comparisons: dict, seeds: list[int]):
 # ********* Parameter Optimization **********
 
 # a helper function to collect all the valid tokens in the all the documents
-def coherence_tokens(descriptions, stopwords):
+def coherence_tokens(documents, stopwords):
 
     # Instantiate vectorizer
     vectorizer = CountVectorizer(
@@ -319,7 +321,7 @@ def coherence_tokens(descriptions, stopwords):
     )
 
     # Fit the vectorizer to the documents
-    vectorizer.fit(descriptions)
+    vectorizer.fit(documents)
 
     # instantiate an analyzer from the vectorizer
     analyzer = vectorizer.build_analyzer()
@@ -333,7 +335,7 @@ def coherence_tokens(descriptions, stopwords):
     tokens = []
 
     # iterate over the documents
-    for doc in descriptions:
+    for doc in documents:
 
         # collect all the tokens in the current doc
         doc_tokens = analyzer(doc)
@@ -352,7 +354,7 @@ def coherence_tokens(descriptions, stopwords):
 
 # a function to sample outputs with one seed and various combinations of min_cluster_sizes and n_neighbors_values
 def optimize_parameters(
-    descriptions,
+    documents,
     embeddings,
     min_cluster_sizes,
     n_neighbors_values,
@@ -362,7 +364,7 @@ def optimize_parameters(
 
     # tokenize documents for input to the coherence calculation
     tokenized_docs = coherence_tokens(
-        descriptions,
+        documents,
         ALL_STOPWORDS
     )
 
@@ -388,7 +390,7 @@ def optimize_parameters(
 
         # collect BERTopic result
         run_result = bertopic(
-            descriptions,
+            documents,
             embeddings,
             seed,
             min_size,
@@ -470,28 +472,33 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+
+    # Import input .txt files
     
-    # Load Data
-    ## Read in Excel file
-    file_path = "af_coding.xlsx"
-    df = pd.read_excel(file_path, sheet_name="Cases")
+    # Source folder
+    folder = Path("""/Users/jordanbauman/Library/CloudStorage/OneDrive-UniversityofWaterloo/Academic Freedom RA/Code/Academic-Freedom/PDF_Extractor/input_pdfs""")
 
-    ## Retrieve descriptions
-    DESCRIPTIONS = df["Description of case"]
-    DESCRIPTIONS = DESCRIPTIONS.to_list()
-    DESCRIPTIONS.pop(-1)  # temporary (removing an empty description)
+    # list holding documents
+    DOCUMENTS = []
+    FILENAMES = []
 
-    ## Retrieve employee names (labels), kept aligned with descriptions above
-    employee_names = df["EMPLOYEE NAME"]
-    employee_names = employee_names.to_list()
-    employee_names.pop(-1)  # temporary (removing the label for the empty description)
+    # iterate over .txt files in source folder
+    for file in sorted(folder.glob("*.txt")):
+        # read in current file
+        with open(file, "r", encoding="utf-8") as f:
+            text = f.read()
+        # append document to the list of documents
+        DOCUMENTS.append(text)
+        FILENAMES.append(file.name)
+
+    print(f"Loaded {len(DOCUMENTS)} documents.")
 
     # Initialize Models
     embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-    # Embed descriptions
+    # Embed documents
     EMBEDDINGS = embedding_model.encode(
-        DESCRIPTIONS, show_progress_bar=True, normalize_embeddings=True
+        DOCUMENTS, show_progress_bar=True, normalize_embeddings=True
     )
 
     # ************ Optimizing hyperparameters **********
@@ -499,7 +506,7 @@ if __name__ == "__main__":
         print("Starting parameter optimization...")
 
         OPTIMIZATION_DF = optimize_parameters(
-            DESCRIPTIONS,
+            DOCUMENTS,
             EMBEDDINGS,
             min_cluster_sizes=[3, 5, 8],
             n_neighbors_values=[10, 15],
@@ -518,7 +525,7 @@ if __name__ == "__main__":
 
         # Run BERTopic across seeds
         RESULTS = run_seed_analysis(
-            DESCRIPTIONS,
+            DOCUMENTS,
             EMBEDDINGS,
             SEEDS,
             min_cluster_size=3, #CHANGE HERE
