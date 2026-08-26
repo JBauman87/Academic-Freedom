@@ -116,8 +116,11 @@ _GENERIC_CHROME_PHRASES = {
     "related",
     "related stories",
     "related articles",
+    "related bulletins",
+    "view all",
     "you might also like",
     "recommended for you",
+    "recommended videos",
     "read more",
     "share",
     "share this article",
@@ -145,6 +148,10 @@ _GENERIC_CHROME_PHRASES = {
     "accept cookies",
     "manage preferences",
     "back to top",
+    "story continues below",
+    "keep watching",
+    "up next",
+    "my account",
 }
 
 # Durations like "2:57" or "30:13" (video length badges) and pure page
@@ -152,6 +159,35 @@ _GENERIC_CHROME_PHRASES = {
 # giveaways of a "trending/popular" list rather than article prose.
 _DURATION_RE = re.compile(r"^\d{1,2}:\d{2}$")
 _LONE_RANK_RE = re.compile(r"^\d{1,2}$")
+
+# "435 Comments" / "13 comments" -- a bare comment-count widget, distinct
+# from real prose that discusses "comments" as a word (which is why this
+# requires a leading number rather than joining "comments" itself into the
+# phrase denylist above).
+_COMMENT_COUNT_RE = re.compile(r"^[\d,]+\s+comments?$", re.IGNORECASE)
+
+# "Popular Now in News", "Trending Videos", "Recommended For You in Sports"
+# etc: a "popular/trending/recommended" widget label followed by an
+# optional "in <category>" suffix that varies per publisher/section, so
+# can't be enumerated as exact phrases in the denylist above.
+_POPULAR_WIDGET_RE = re.compile(
+    r"^(popular now|trending now|trending|most popular|most read|"
+    r"recommended for you|recommended)(\s+(in|on)\s+\w[\w\s&]*)?$",
+    re.IGNORECASE,
+)
+
+# "Sponsored by Destination Osoyoos" / "Promoted by Our Newsroom" -- native
+# advertising / cross-promo labels where the advertiser/section name varies,
+# so matched as a prefix rather than an exact phrase.
+_SPONSORED_BY_RE = re.compile(r"^(sponsored|promoted)\s+by\b", re.IGNORECASE)
+
+# "Subscribe $0.50/week" / "Subscribe $20 for 1 year" / "Subscribe $6 for 6
+# months" -- a paywall CTA button whose price/term varies per publisher.
+_SUBSCRIBE_PRICE_RE = re.compile(r"^subscribe\s*\$", re.IGNORECASE)
+
+# "Sign up now >>" -- a newsletter-signup CTA link; the ">>" arrow and
+# "now" wording is common across several outlets' PDF exports.
+_SIGN_UP_NOW_RE = re.compile(r"^sign up now\b", re.IGNORECASE)
 
 
 def _normalize(text: str) -> str:
@@ -165,6 +201,16 @@ def _matches_generic_chrome(text: str) -> bool:
     if norm in _GENERIC_CHROME_PHRASES:
         return True
     if _DURATION_RE.match(norm) or _LONE_RANK_RE.match(norm):
+        return True
+    if _COMMENT_COUNT_RE.match(norm):
+        return True
+    if _POPULAR_WIDGET_RE.match(norm):
+        return True
+    if _SPONSORED_BY_RE.match(norm):
+        return True
+    if _SUBSCRIBE_PRICE_RE.match(norm):
+        return True
+    if _SIGN_UP_NOW_RE.match(norm):
         return True
     # "Estimated 2 minutes" / "Estimated N minute(s)" read-time widgets
     if norm.startswith("estimated") and ("minute" in norm or "min" in norm):
@@ -183,12 +229,25 @@ def _matches_generic_chrome(text: str) -> bool:
 MERGED_CHROME_LINE_MIN_LINES = 3
 MERGED_CHROME_LINE_MATCH_FRACTION = 0.4
 
+# A 2-line block (below MERGED_CHROME_LINE_MIN_LINES) is still safe to
+# treat as chrome if BOTH of its lines independently match the generic
+# phrase denylist -- e.g. a "Related Bulletins" widget label merged with
+# its own "View All" link into one 2-line block. Requiring *all* lines to
+# match (rather than the more lenient fraction used for 3+ line blocks)
+# keeps this safe: a real 2-line sentence/heading could coincidentally
+# have one line match a denylist word, but having both short lines each
+# independently equal a denylist phrase is essentially only possible for
+# genuine merged UI chrome.
+MERGED_CHROME_TWO_LINE_MIN_LINES = 2
+
 
 def _matches_merged_chrome_block(text: str) -> bool:
     lines = [l for l in text.split("\n") if l.strip()]
-    if len(lines) < MERGED_CHROME_LINE_MIN_LINES:
+    if len(lines) < MERGED_CHROME_TWO_LINE_MIN_LINES:
         return False
     matches = sum(1 for l in lines if _matches_generic_chrome(l))
+    if len(lines) < MERGED_CHROME_LINE_MIN_LINES:
+        return matches == len(lines)
     return (matches / len(lines)) >= MERGED_CHROME_LINE_MATCH_FRACTION
 
 
@@ -395,6 +454,57 @@ CARD_GRID_MAX_ITEMS = 8
 CARD_GRID_MAX_PAGE_NARROW_FRACTION = 0.8
 
 
+# When grouping a column's stacked narrow blocks into a single "card"
+# (see _group_into_cards below), a gap between consecutive blocks no
+# wider than this (as a fraction of page height) is treated as still
+# part of the same card -- e.g. the small gaps between a teaser's
+# category label, wrapped headline lines, and trailing date stamp.
+CARD_STACK_MAX_GAP_FRAC = 0.05
+
+# A grouped "card" is only eligible for card-grid detection if it stays
+# within these limits on total text and vertical extent. This was found
+# necessary after the whole-card grouping fix above (needed to correctly
+# remove a genuine multi-row teaser grid in its entirety -- see
+# _group_into_cards docstring) also caused a serious false-positive
+# regression: a real page laid out in narrow newspaper/journal-style
+# columns (each column full of genuine running body-text paragraphs, not
+# short teasers) satisfies the exact same narrow-column,
+# vertically-overlapping, non-overlapping-horizontally geometry as an
+# actual card grid once each column's blocks are grouped into one
+# tall "card" -- e.g. a 4-column newspaper page or a 3-column journal
+# article layout, both found via corpus re-scan, produced whole-page
+# card-grid false positives that deleted genuine multi-paragraph
+# articles entirely. A real teaser card (category label + headline +
+# byline/date) is short by nature -- every genuine example found in the
+# real corpus stayed under 100 characters and under 25% of the page's
+# height -- while a real column of body-text paragraphs, once merged
+# into one card by the stacking logic, is both far longer and taller.
+# Capped with headroom above the observed genuine maximum while staying
+# well below every false-positive example found (which started at 280
+# characters / 10% of page height and ran far higher).
+CARD_MAX_CHARS = 200
+CARD_MAX_HEIGHT_FRAC = 0.25
+
+
+def _group_into_cards(column_blocks: List[TextBlock]) -> List[List[TextBlock]]:
+    """
+    Within a single narrow column (blocks already sharing a left edge),
+    group vertically-stacked blocks with only a small gap between them
+    into one "card" -- e.g. a teaser's category label, its headline
+    (possibly itself wrapped across more than one block), and a trailing
+    date stamp, which are visually one teaser item, not several. A large
+    vertical gap starts a new card in the same column.
+    """
+    ordered = sorted(column_blocks, key=lambda b: b.y0_frac)
+    cards: List[List[TextBlock]] = []
+    for block in ordered:
+        if cards and block.y0_frac - cards[-1][-1].y1_frac <= CARD_STACK_MAX_GAP_FRAC:
+            cards[-1].append(block)
+        else:
+            cards.append([block])
+    return cards
+
+
 def _find_card_grid_block_ids(blocks: List[TextBlock]) -> Set[int]:
     """
     Detect a horizontal row of narrow "card" blocks (e.g. several
@@ -414,6 +524,30 @@ def _find_card_grid_block_ids(blocks: List[TextBlock]) -> Set[int]:
     routes such pages to manual/OCR review rather than letting them be
     treated as harmless decorative chrome. This must never happen, since
     a garbled page can carry substantial real content.
+
+    Detection works in two stages:
+
+    1. Narrow blocks are first clustered by left edge into columns (the
+       same left-margin-clustering approach used for the main-column
+       estimate), then each column's blocks are grouped into "cards" --
+       contiguous vertical runs with only a small gap between them (see
+       _group_into_cards). This matters because a real card grid's
+       individual teasers often wrap to different numbers of lines (one
+       teaser's headline is one line, another's wraps to three), so
+       checking row-by-row alignment across columns directly -- as an
+       earlier version of this function did -- only catches whichever
+       row happens to still line up across all columns (typically just
+       the first), silently leaving the rest of each card's lines
+       behind as ordinary "kept" text and, worse, pulling a real content
+       page's short-block statistics out of proportion in a way that can
+       trigger the unrelated decorative-page auto-exclusion check in
+       confidence.py on the page's genuine body paragraphs. Grouping into
+       whole cards first ensures a matched grid removes each card in its
+       entirety.
+    2. The resulting per-column cards (each with its own merged bounding
+       box) are then checked for the actual grid geometry: enough of them
+       (CARD_GRID_MIN_ITEMS to CARD_GRID_MAX_ITEMS) sitting in the same
+       vertical band as each other, without overlapping horizontally.
     """
     narrow = [
         b
@@ -431,7 +565,41 @@ def _find_card_grid_block_ids(blocks: List[TextBlock]) -> Set[int]:
     if blocks and len(narrow) / len(blocks) > CARD_GRID_MAX_PAGE_NARROW_FRACTION:
         return set()
 
-    n = len(narrow)
+    # Stage 1: cluster into columns by left edge, then group each
+    # column's blocks into whole cards.
+    column_clusters: List[List[TextBlock]] = []
+    seen_ids: Set[int] = set()
+    for candidate in sorted(narrow, key=lambda b: b.x0_frac):
+        if id(candidate) in seen_ids:
+            continue
+        column = [
+            b for b in narrow if abs(b.x0_frac - candidate.x0_frac) <= LEFT_EDGE_CLUSTER_TOLERANCE
+        ]
+        seen_ids.update(id(b) for b in column)
+        column_clusters.append(column)
+
+    cards: List[List[TextBlock]] = []
+    for column in column_clusters:
+        cards.extend(_group_into_cards(column))
+
+    # A card that is too long or too tall to plausibly be a short teaser
+    # item (see CARD_MAX_CHARS/CARD_MAX_HEIGHT_FRAC docstring above) is
+    # not eligible -- this is what actually distinguishes a genuine
+    # multi-column card grid from a page laid out in narrow
+    # newspaper/journal-style body-text columns, which would otherwise
+    # satisfy the same union-find geometry test once grouped into cards.
+    cards = [
+        c
+        for c in cards
+        if sum(len(b.text) for b in c) <= CARD_MAX_CHARS
+        and (max(b.y1_frac for b in c) - min(b.y0_frac for b in c)) <= CARD_MAX_HEIGHT_FRAC
+    ]
+    if len(cards) < CARD_GRID_MIN_ITEMS:
+        return set()
+
+    # Stage 2: union-find over whole cards (using each card's merged
+    # bounding box) rather than individual blocks.
+    n = len(cards)
     parent = list(range(n))
 
     def find(i: int) -> int:
@@ -445,34 +613,46 @@ def _find_card_grid_block_ids(blocks: List[TextBlock]) -> Set[int]:
         if ri != rj:
             parent[ri] = rj
 
+    def card_bbox(card: List[TextBlock]):
+        return (
+            min(b.x0_frac for b in card),
+            min(b.y0_frac for b in card),
+            max(b.x1_frac for b in card),
+            max(b.y1_frac for b in card),
+        )
+
+    bboxes = [card_bbox(c) for c in cards]
+
     for i in range(n):
         for j in range(i + 1, n):
-            a, b = narrow[i], narrow[j]
-            overlap_start = max(a.y0_frac, b.y0_frac)
-            overlap_end = min(a.y1_frac, b.y1_frac)
+            ax0, ay0, ax1, ay1 = bboxes[i]
+            bx0, by0, bx1, by1 = bboxes[j]
+            overlap_start = max(ay0, by0)
+            overlap_end = min(ay1, by1)
             overlap = max(0.0, overlap_end - overlap_start)
-            shorter_height = min(a.y1_frac - a.y0_frac, b.y1_frac - b.y0_frac)
+            shorter_height = min(ay1 - ay0, by1 - by0)
             if shorter_height > 0 and overlap / shorter_height >= CARD_GRID_Y_OVERLAP_MIN_FRAC:
                 # Also require they don't horizontally overlap much --
                 # side-by-side cards, not a stacked column of items at
                 # the same x position (which is a normal single-column
                 # sidebar list, already handled by the side-rail
                 # heuristic elsewhere).
-                x_overlap_start = max(a.x0_frac, b.x0_frac)
-                x_overlap_end = min(a.x1_frac, b.x1_frac)
+                x_overlap_start = max(ax0, bx0)
+                x_overlap_end = min(ax1, bx1)
                 x_overlap = max(0.0, x_overlap_end - x_overlap_start)
-                shorter_width = min(a.x1_frac - a.x0_frac, b.x1_frac - b.x0_frac)
+                shorter_width = min(ax1 - ax0, bx1 - bx0)
                 if shorter_width == 0 or x_overlap / shorter_width < 0.5:
                     union(i, j)
 
     clusters: dict = {}
     for i in range(n):
-        clusters.setdefault(find(i), []).append(narrow[i])
+        clusters.setdefault(find(i), []).append(i)
 
     removed: Set[int] = set()
-    for group in clusters.values():
-        if CARD_GRID_MIN_ITEMS <= len(group) <= CARD_GRID_MAX_ITEMS:
-            removed.update(id(b) for b in group)
+    for card_indices in clusters.values():
+        if CARD_GRID_MIN_ITEMS <= len(card_indices) <= CARD_GRID_MAX_ITEMS:
+            for idx in card_indices:
+                removed.update(id(b) for b in cards[idx])
     return removed
 
 
@@ -517,8 +697,39 @@ def _find_main_column_x_range(blocks: List[TextBlock]):
 
     long_blocks = [b for b in blocks if len(b.text) >= LONG_BLOCK_MIN_CHARS]
     if long_blocks:
-        x0 = min(b.x0_frac for b in long_blocks)
-        x1 = max(b.x1_frac for b in long_blocks)
+        # Cluster the long blocks by left edge and use only the cluster
+        # with the most total characters, rather than spanning min/max
+        # across ALL long blocks regardless of which column they're in.
+        # A single long block sitting alone in a right-hand sidebar/ad
+        # column (observed on a real CBC News page: a 105-char "related
+        # articles" teaser headline, long enough on its own to pass the
+        # LONG_BLOCK_MIN_CHARS bar, sitting well to the right of ten
+        # genuine body paragraphs at the page's actual left margin) must
+        # not be allowed to pull the estimated main-column range out to
+        # cover that teaser's position -- doing so hides it (and its
+        # sibling teaser items) from the side-rail heuristic below,
+        # since they'd then appear to already be "inside" the main
+        # column. Genuine body text reliably accounts for the large
+        # majority of a page's real paragraph-length prose, so the
+        # highest-total-character cluster is a robust way to prefer it
+        # over an isolated long outlier in a different column.
+        clusters_of_long: List[List[TextBlock]] = []
+        seen_long_ids: Set[int] = set()
+        for candidate in sorted(long_blocks, key=lambda b: b.x0_frac):
+            if id(candidate) in seen_long_ids:
+                continue
+            cluster = [
+                b
+                for b in long_blocks
+                if abs(b.x0_frac - candidate.x0_frac) <= LEFT_EDGE_CLUSTER_TOLERANCE
+            ]
+            seen_long_ids.update(id(b) for b in cluster)
+            clusters_of_long.append(cluster)
+        best_long_cluster = max(
+            clusters_of_long, key=lambda c: sum(len(b.text) for b in c)
+        )
+        x0 = min(b.x0_frac for b in best_long_cluster)
+        x1 = max(b.x1_frac for b in best_long_cluster)
         return x0, x1
 
     # Fallback: cluster blocks by left edge, then prefer the *leftmost*
@@ -565,7 +776,6 @@ def strip_page_chrome(page: PageLayout) -> ColumnResult:
     if not blocks:
         return ColumnResult(removed_block_ids=removed, notes=notes)
 
-    main_range = _find_main_column_x_range(blocks)
     nav_row_ids = _find_nav_row_block_ids(blocks)
     for block in blocks:
         if id(block) in nav_row_ids:
@@ -578,6 +788,20 @@ def strip_page_chrome(page: PageLayout) -> ColumnResult:
             removed.add(id(block))
             notes.append(f"card-grid: {block.text[:30]!r}")
 
+    # Heuristics 1/1b/1c below are all "column-independent": they classify
+    # a block as chrome from its own text/geometry alone, without needing
+    # to know where the main body column is. Running them BEFORE
+    # estimating the main column (heuristic 2) matters: on a page whose
+    # only long/wide blocks happen to be nav/footer/ad chrome rather than
+    # real article body text (e.g. a masthead nav bar merged into one wide
+    # block, or an "Introducing our newsletter" promo block wider than the
+    # real body paragraphs below it), leaving that chrome in the pool the
+    # column estimator samples from can pull the estimated column far
+    # wider than the real body text -- silently disabling side-rail
+    # detection for genuine sidebar/ad content on that same page. Cheaply
+    # stripping the unambiguous, self-evident chrome first keeps the
+    # column estimate honest.
+    prefiltered: List[TextBlock] = []
     for block in blocks:
         if id(block) in removed:
             continue
@@ -612,25 +836,59 @@ def strip_page_chrome(page: PageLayout) -> ColumnResult:
             notes.append(f"packed-short-lines: {block.text[:40]!r}")
             continue
 
-        # Heuristic 2: geometry -- short block sitting well outside (to the
+        # Heuristic 3 (masthead/nav strip): a short block hugging the very
+        # top of the page. Catches multi-item nav bars (e.g. "Menu" + site
+        # name + "Sign In") that a PDF renderer merged into one block
+        # because they share a baseline, which Heuristic 1's whole-block
+        # phrase match would otherwise miss. Applied here, ahead of the
+        # column estimate, for the same reason as 1/1b/1c above -- a wide
+        # top-of-page masthead block must not be allowed to widen the
+        # column estimate before it's removed.
+        #
+        # Restricted to the first page of the document: a masthead/nav bar
+        # is a top-of-*document* element that a printed multi-page web
+        # article only carries once, on its first page. On page 2+, real
+        # body text simply continues from the top margin (there is no
+        # masthead there to repeat), so this same y1_frac<=TOP_STRIP_MAX_Y_FRAC
+        # geometry test would otherwise misfire on an ordinary paragraph
+        # that happens to start at the top of a later page -- a real
+        # observed failure (e.g. a National Post article's page 4 opening
+        # sentence, "saying she couldn't effectively continue in...",
+        # being deleted outright). Cross-page repeated chrome (a
+        # timestamp/breadcrumb repeated on every page) is instead caught
+        # by dedupe.py, which correctly requires actual repetition across
+        # pages rather than mere position on a single page.
+        if (
+            page.page_index == 0
+            and word_count <= TOP_STRIP_MAX_WORDS
+            and block.y1_frac <= TOP_STRIP_MAX_Y_FRAC
+        ):
+            removed.add(id(block))
+            notes.append(f"top-strip (y1_frac={block.y1_frac:.2f}): {block.text!r}")
+            continue
+
+        prefiltered.append(block)
+
+    main_range = _find_main_column_x_range(prefiltered)
+
+    for block in prefiltered:
+        word_count = len(block.text.split())
+
+        # Heuristic 2: geometry -- a block sitting well outside (to the
         # right of, or narrower/offset from) the estimated main column.
+        # Rather than a fixed absolute x0_frac cutoff (which fails on a
+        # page whose main column itself is narrow, e.g. a right-hand news
+        # article column with its own further-right sidebar), a block
+        # qualifies if it starts clearly past where the main column ends
+        # OR is noticeably narrower than the main column while sitting
+        # outside it -- both signals a secondary column/rail rather than
+        # a continuation of body text.
         if main_range and word_count <= SIDE_RAIL_MAX_WORDS:
             main_x0, main_x1 = main_range
-            # Block starts clearly to the right of where body text ends.
             starts_right_of_body = block.x0_frac >= main_x1 - 0.03 and block.x0_frac > 0.55
             if starts_right_of_body:
                 removed.add(id(block))
                 notes.append(f"side-rail (x0_frac={block.x0_frac:.2f}): {block.text!r}")
                 continue
-
-        # Heuristic 3: masthead/nav strip -- a short block hugging the very
-        # top of the page. Catches multi-item nav bars (e.g. "Menu" + site
-        # name + "Sign In") that a PDF renderer merged into one block
-        # because they share a baseline, which Heuristic 1's whole-block
-        # phrase match would otherwise miss.
-        if word_count <= TOP_STRIP_MAX_WORDS and block.y1_frac <= TOP_STRIP_MAX_Y_FRAC:
-            removed.add(id(block))
-            notes.append(f"top-strip (y1_frac={block.y1_frac:.2f}): {block.text!r}")
-            continue
 
     return ColumnResult(removed_block_ids=removed, notes=notes)
