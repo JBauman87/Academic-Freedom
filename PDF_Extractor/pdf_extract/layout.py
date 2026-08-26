@@ -131,6 +131,25 @@ def extract_layout(path: str, min_chars_for_text_layer: int = 10) -> DocumentLay
             page = doc.load_page(page_index)
             width, height = page.rect.width, page.rect.height
 
+            # PyMuPDF's get_text("dict") reports bounding boxes in the
+            # page's raw/pre-rotation coordinate space (matching its
+            # mediabox), not the rotated, "as displayed" space that
+            # page.rect describes -- these differ whenever a page has a
+            # nonzero /Rotate entry (e.g. a landscape-scanned letter
+            # embedded at 90/270 degrees inside an otherwise-portrait
+            # PDF, observed in real documents in this batch). Left
+            # unaccounted for, every downstream x0_frac/y0_frac-based
+            # heuristic (chrome stripping, column estimation, reading
+            # order) silently breaks on such a page -- coordinates can
+            # even exceed the nominal page width/height, since they're
+            # being divided by the wrong axis. `page.rotation_matrix`
+            # maps raw coordinates into the same rotated space page.rect
+            # already describes, so every block's bbox is transformed
+            # through it before any fraction is computed. On an
+            # unrotated page this matrix is the identity, so this is a
+            # no-op for the common case.
+            rotation_matrix = page.rotation_matrix
+
             raw = page.get_text("dict")
             blocks: List[TextBlock] = []
 
@@ -157,7 +176,13 @@ def extract_layout(path: str, min_chars_for_text_layer: int = 10) -> DocumentLay
                 if not text:
                     continue
 
-                bbox = tuple(raw_block.get("bbox", (0, 0, 0, 0)))
+                raw_bbox = fitz.Rect(raw_block.get("bbox", (0, 0, 0, 0)))
+                rotated_bbox = raw_bbox * rotation_matrix
+                # A rotation can flip which corner is "top-left" relative
+                # to the raw coordinates; normalize so x0<=x1, y0<=y1 as
+                # every downstream consumer expects.
+                rotated_bbox.normalize()
+                bbox = tuple(rotated_bbox)
                 blocks.append(
                     TextBlock(
                         page_index=page_index,
