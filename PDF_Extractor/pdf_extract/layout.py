@@ -115,6 +115,52 @@ class DocumentLayout:
         return [p.page_index for p in self.pages if not p.has_text_layer]
 
 
+# A page whose surviving text is dominated by full-bleed scanned image(s)
+# covering at least this fraction of the page area is treated as
+# image-dominated, overriding the char-count-based has_text_layer signal
+# below (see MAX_CAPTION_CHARS_ON_IMAGE_DOMINATED_PAGE). Real single-photo
+# illustrations in an otherwise-text page cover only a modest fraction of
+# the page; a genuinely scanned page reliably covers effectively the
+# entire page (often slightly over 100% of the nominal page area, since
+# scanners commonly capture a hair past the page's own trimmed edges).
+IMAGE_DOMINATED_PAGE_MIN_AREA_FRAC = 0.5
+
+# Even an image-dominated page (see above) is only reclassified as
+# "no text layer" if its own extractable text is this short or shorter.
+# Found via real documents in this corpus: a scanned page's PDF text layer
+# sometimes carries a short caption ("Attachment # 1", 15 chars) added
+# separately from the scan itself -- just past min_chars_for_text_layer,
+# which otherwise wrongly marks the whole page as already having a usable
+# text layer and skips OCR, discarding the real scanned content entirely.
+# A genuine (non-image-dominated) text page's real body content is always
+# far longer than this, so raising the bar only on image-dominated pages
+# cannot misclassify one.
+MAX_CAPTION_CHARS_ON_IMAGE_DOMINATED_PAGE = 60
+
+
+def _page_image_area_fraction(page: "fitz.Page") -> float:
+    """
+    Fraction of the page's area covered by embedded image(s), summing each
+    image's own bounding box (not deduplicated/clipped against overlaps or
+    the page edge) -- a cheap approximation that's deliberately biased
+    toward *overestimating* coverage for multiple/overlapping images, since
+    the only decision this feeds is "does this page look like a scan",
+    where overestimating a genuine multi-image scan page is harmless but
+    underestimating it (and skipping OCR) is not.
+    """
+    page_area = page.rect.width * page.rect.height
+    if not page_area:
+        return 0.0
+    total = 0.0
+    for info in page.get_image_info():
+        bbox = info.get("bbox")
+        if not bbox:
+            continue
+        rect = fitz.Rect(bbox)
+        total += rect.width * rect.height
+    return total / page_area
+
+
 def extract_layout(path: str, min_chars_for_text_layer: int = 10) -> DocumentLayout:
     """
     Open a PDF and extract per-page text blocks with positional metadata.
@@ -122,6 +168,17 @@ def extract_layout(path: str, min_chars_for_text_layer: int = 10) -> DocumentLay
     A page is marked ``has_text_layer=False`` if it yields fewer than
     ``min_chars_for_text_layer`` characters of extractable text -- this is
     the signal used downstream to decide whether OCR fallback is needed.
+
+    A page is ALSO marked ``has_text_layer=False`` -- even if it clears
+    that char-count bar -- when it is dominated by full-page scanned
+    image(s) (see IMAGE_DOMINATED_PAGE_MIN_AREA_FRAC) and its extractable
+    text is no longer than a short caption (see
+    MAX_CAPTION_CHARS_ON_IMAGE_DOMINATED_PAGE). Without this override, a
+    scanned page carrying only a short caption in its real text layer
+    (e.g. "Attachment # 1") would be wrongly treated as already having
+    usable text, silently skipping OCR and losing the actual scanned
+    content -- a real defect found in this corpus (a report's photocopied
+    attachment pages, and a Brock/Isla report's scanned appendix pages).
     """
     doc = fitz.open(path)
     pages: List[PageLayout] = []
@@ -197,6 +254,13 @@ def extract_layout(path: str, min_chars_for_text_layer: int = 10) -> DocumentLay
 
             char_count = sum(len(b.text) for b in blocks)
             has_text_layer = char_count >= min_chars_for_text_layer
+
+            if (
+                has_text_layer
+                and char_count <= MAX_CAPTION_CHARS_ON_IMAGE_DOMINATED_PAGE
+                and _page_image_area_fraction(page) >= IMAGE_DOMINATED_PAGE_MIN_AREA_FRAC
+            ):
+                has_text_layer = False
 
             pages.append(
                 PageLayout(

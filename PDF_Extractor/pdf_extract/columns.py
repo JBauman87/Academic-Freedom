@@ -344,8 +344,26 @@ def _find_nav_row_block_ids(blocks: List[TextBlock]) -> Set[int]:
     center-tolerance band can split those into separate "rows" purely
     because a two-line item's center sits slightly lower than its
     single-line neighbors.
+
+    Blocks matching the garbled-truncated-text-layer signature (see
+    confidence.count_garbled_text_layer_blocks) are excluded from
+    eligibility, for the same reason the card-grid heuristic below
+    excludes them: a real PDF text-layer defect scatters a page's real
+    content into many narrow, short-line fragments that can otherwise
+    satisfy this heuristic's "several short blocks in a row" geometry
+    purely by coincidence (observed on a real CAUT report with a torn
+    text layer). If this heuristic consumed those fragments as chrome,
+    confidence.py's dedicated garbled-text detector -- which routes such
+    pages to manual/OCR review rather than silently including scrambled
+    text -- would never see them, since it only inspects blocks that
+    survive this stage.
     """
-    eligible = [b for b in blocks if len(b.text.split()) <= NAV_ROW_MAX_WORDS]
+    eligible = [
+        b
+        for b in blocks
+        if len(b.text.split()) <= NAV_ROW_MAX_WORDS
+        and confidence.count_garbled_text_layer_blocks([b]) == 0
+    ]
     if len(eligible) < NAV_ROW_MIN_ITEMS:
         return set()
 
@@ -695,45 +713,88 @@ def _find_main_column_x_range(blocks: List[TextBlock]):
     if not blocks:
         return None
 
+    # Cluster ALL blocks by left edge up front -- used both to score the
+    # long-block-seeded candidates below and as the fallback when there's
+    # no long-block evidence at all.
+    all_clusters: List[List[TextBlock]] = []
+    seen_all_ids: Set[int] = set()
+    for candidate in sorted(blocks, key=lambda b: b.x0_frac):
+        if id(candidate) in seen_all_ids:
+            continue
+        cluster = [
+            b
+            for b in blocks
+            if abs(b.x0_frac - candidate.x0_frac) <= LEFT_EDGE_CLUSTER_TOLERANCE
+        ]
+        seen_all_ids.update(id(b) for b in cluster)
+        all_clusters.append(cluster)
+
     long_blocks = [b for b in blocks if len(b.text) >= LONG_BLOCK_MIN_CHARS]
     if long_blocks:
-        # Cluster the long blocks by left edge and use only the cluster
-        # with the most total characters, rather than spanning min/max
-        # across ALL long blocks regardless of which column they're in.
-        # A single long block sitting alone in a right-hand sidebar/ad
+        # Among the full left-edge clusters, prefer whichever one
+        # contains at least one long (>= LONG_BLOCK_MIN_CHARS) block --
+        # that's normally the strongest signal that a cluster is real
+        # body prose rather than a sidebar teaser list. When several
+        # clusters qualify, pick by total character count across each
+        # cluster's full contents (not just its long members), since a
+        # single long block sitting alone in a right-hand sidebar/ad
         # column (observed on a real CBC News page: a 105-char "related
         # articles" teaser headline, long enough on its own to pass the
         # LONG_BLOCK_MIN_CHARS bar, sitting well to the right of ten
         # genuine body paragraphs at the page's actual left margin) must
-        # not be allowed to pull the estimated main-column range out to
-        # cover that teaser's position -- doing so hides it (and its
-        # sibling teaser items) from the side-rail heuristic below,
-        # since they'd then appear to already be "inside" the main
-        # column. Genuine body text reliably accounts for the large
-        # majority of a page's real paragraph-length prose, so the
-        # highest-total-character cluster is a robust way to prefer it
-        # over an isolated long outlier in a different column.
-        clusters_of_long: List[List[TextBlock]] = []
-        seen_long_ids: Set[int] = set()
-        for candidate in sorted(long_blocks, key=lambda b: b.x0_frac):
-            if id(candidate) in seen_long_ids:
-                continue
-            cluster = [
-                b
-                for b in long_blocks
-                if abs(b.x0_frac - candidate.x0_frac) <= LEFT_EDGE_CLUSTER_TOLERANCE
-            ]
-            seen_long_ids.update(id(b) for b in cluster)
-            clusters_of_long.append(cluster)
-        best_long_cluster = max(
-            clusters_of_long, key=lambda c: sum(len(b.text) for b in c)
-        )
-        x0 = min(b.x0_frac for b in best_long_cluster)
-        x1 = max(b.x1_frac for b in best_long_cluster)
+        # not be allowed to win over the real, much larger body column.
+        long_cluster_ids = {
+            id(c)
+            for c in all_clusters
+            if any(len(b.text) >= LONG_BLOCK_MIN_CHARS for b in c)
+        }
+        long_clusters = [c for c in all_clusters if id(c) in long_cluster_ids]
+        best_long_cluster = max(long_clusters, key=lambda c: sum(len(b.text) for b in c))
+
+        # Guard against a second failure mode (observed on a real
+        # National Post article export): a page whose real body text is
+        # rendered as many individual single-*line* blocks -- each on
+        # its own well under LONG_BLOCK_MIN_CHARS -- sitting beside a
+        # right-hand "Trending" teaser rail whose items happen to be
+        # merged multi-line blocks that individually exceed the
+        # threshold. In that case NO cluster containing the real body
+        # ever qualifies as "long" at all, so the teaser rail wins by
+        # default even though it holds only a fraction of the page's
+        # real text. If some other left-edge cluster (with more than one
+        # block, to rule out a single stray fragment) holds strictly
+        # more total text than the best long-evidence cluster, it is
+        # almost certainly the real body -- a short ad/teaser rail does
+        # not out-accumulate genuine multi-paragraph body text just
+        # because none of its individual lines happen to be long.
+        other_clusters = [c for c in all_clusters if id(c) not in long_cluster_ids]
+        if other_clusters:
+            best_other_cluster = max(other_clusters, key=lambda c: sum(len(b.text) for b in c))
+            if len(best_other_cluster) > 1 and sum(
+                len(b.text) for b in best_other_cluster
+            ) > sum(len(b.text) for b in best_long_cluster):
+                best_long_cluster = best_other_cluster
+                x0 = min(b.x0_frac for b in best_long_cluster)
+                x1 = max(b.x1_frac for b in best_long_cluster)
+                return x0, x1
+
+        # Bound the returned range using only the cluster's long-block
+        # members (not every short block that happens to share its left
+        # edge) -- e.g. a wide decorative title block sharing the body
+        # text's left margin must not be allowed to stretch the estimated
+        # column all the way to the title's own right edge, which would
+        # otherwise blunt the side-rail heuristic below (a real sidebar
+        # starting well before that inflated boundary would no longer
+        # look "outside" the main column). This mirrors the original
+        # long-only bounding behaviour; only the cluster *selection* above
+        # considers full cluster membership/totals.
+        long_members = [b for b in best_long_cluster if len(b.text) >= LONG_BLOCK_MIN_CHARS]
+        x0 = min(b.x0_frac for b in long_members)
+        x1 = max(b.x1_frac for b in long_members)
         return x0, x1
 
-    # Fallback: cluster blocks by left edge, then prefer the *leftmost*
-    # cluster with more than one block. This encodes a standard
+    # Fallback: no long-block evidence anywhere on the page at all --
+    # prefer the *leftmost* cluster (from the same all_clusters computed
+    # above) with more than one block. This encodes a standard
     # Western-document-layout prior: the primary reading column starts at
     # (or very near) the page's left margin, while sidebars/rails/teaser
     # lists are conventionally positioned to the right of it. This is
@@ -744,22 +805,9 @@ def _find_main_column_x_range(blocks: List[TextBlock]):
     # metrics pick the wrong cluster. Requiring more than one block
     # avoids a single stray far-left element (e.g. a lone page number or
     # decorative rule) being mistaken for the main column.
-    clusters: List[List[TextBlock]] = []
-    seen_ids: Set[int] = set()
-    for candidate in sorted(blocks, key=lambda b: b.x0_frac):
-        if id(candidate) in seen_ids:
-            continue
-        cluster = [
-            b
-            for b in blocks
-            if abs(b.x0_frac - candidate.x0_frac) <= LEFT_EDGE_CLUSTER_TOLERANCE
-        ]
-        seen_ids.update(id(b) for b in cluster)
-        clusters.append(cluster)
-
-    best_cluster = next((c for c in clusters if len(c) > 1), None)
+    best_cluster = next((c for c in all_clusters if len(c) > 1), None)
     if best_cluster is None:
-        best_cluster = clusters[0] if clusters else []
+        best_cluster = all_clusters[0] if all_clusters else []
 
     if not best_cluster:
         return None
@@ -802,6 +850,21 @@ def strip_page_chrome(page: PageLayout) -> ColumnResult:
     # stripping the unambiguous, self-evident chrome first keeps the
     # column estimate honest.
     prefiltered: List[TextBlock] = []
+    # Left-edge positions of any block whose own text matches a "popular/
+    # trending" widget label (e.g. "TRENDING", "Popular Now in News") --
+    # collected up front, before the main filtering loop below, so that
+    # heuristic 2 (side-rail geometry) can also catch that widget's own
+    # teaser items. A "Trending" rail's header is reliably short enough to
+    # match the generic chrome-phrase denylist on its own, but its sibling
+    # teaser items directly below it are ordinary short prose fragments
+    # (headline text) with no shared vocabulary to denylist -- only their
+    # shared left edge with the widget's own header identifies them as
+    # belonging to the same rail. Real body text never sits at the same
+    # left edge as a "Trending"/"Popular Now" label, so this is safe.
+    widget_header_x0s = [
+        b.x0_frac for b in blocks if _matches_generic_chrome(b.text) and _POPULAR_WIDGET_RE.match(_normalize(b.text))
+    ]
+
     for block in blocks:
         if id(block) in removed:
             continue
@@ -883,12 +946,50 @@ def strip_page_chrome(page: PageLayout) -> ColumnResult:
         # OR is noticeably narrower than the main column while sitting
         # outside it -- both signals a secondary column/rail rather than
         # a continuation of body text.
-        if main_range and word_count <= SIDE_RAIL_MAX_WORDS:
+        #
+        # Blocks matching the garbled-truncated-text-layer signature are
+        # excluded here for the same reason as the nav-row and card-grid
+        # heuristics above: a real PDF text-layer defect on a torn page
+        # (observed on a real CAUT report) scatters substantial real
+        # content into many short, narrow fragments, several of which
+        # can coincidentally sit to the right of that same page's
+        # (already-corrupted) main-column estimate. Removing them here
+        # would hide the defect from confidence.py's dedicated detector,
+        # which must see them to flag the page for manual/OCR review
+        # rather than let it be silently misread as a harmless sidebar.
+        if (
+            main_range
+            and word_count <= SIDE_RAIL_MAX_WORDS
+            and confidence.count_garbled_text_layer_blocks([block]) == 0
+        ):
             main_x0, main_x1 = main_range
             starts_right_of_body = block.x0_frac >= main_x1 - 0.03 and block.x0_frac > 0.55
             if starts_right_of_body:
                 removed.add(id(block))
                 notes.append(f"side-rail (x0_frac={block.x0_frac:.2f}): {block.text!r}")
+                continue
+
+        # Heuristic 2b: sibling of an already-identified "Trending"/
+        # "Popular Now" widget header (see widget_header_x0s above). A
+        # widget's teaser items sit at the same left edge as its own
+        # header but are ordinary short headline fragments with no
+        # shared wording to denylist, so they need this geometric tie
+        # back to their header rather than a phrase match of their own.
+        # Only applied to blocks the main-column estimate has already
+        # placed outside the real body column, so a genuine body
+        # paragraph that happens to share a widget's left edge (e.g. on
+        # a page with no widget at all, where this list is empty) is
+        # never at risk.
+        if (
+            main_range
+            and word_count <= SIDE_RAIL_MAX_WORDS
+            and confidence.count_garbled_text_layer_blocks([block]) == 0
+            and any(abs(block.x0_frac - wx0) <= LEFT_EDGE_CLUSTER_TOLERANCE for wx0 in widget_header_x0s)
+        ):
+            main_x0, main_x1 = main_range
+            if block.x0_frac >= main_x1 - 0.03:
+                removed.add(id(block))
+                notes.append(f"trending-widget-sibling (x0_frac={block.x0_frac:.2f}): {block.text!r}")
                 continue
 
     return ColumnResult(removed_block_ids=removed, notes=notes)

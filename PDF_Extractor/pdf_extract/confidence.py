@@ -14,6 +14,7 @@ reasons are recorded.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -151,6 +152,57 @@ GARBLED_TEXT_MIN_BLOCK_COUNT = 2
 GARBLED_TEXT_MAX_FONT_SIZE = 13.0
 
 
+# --- Character-level ("weird word") OCR/scan garbling detection --------
+# A second, distinct PDF-source defect from the truncated-line signature
+# above: found on a real CAUT report's scanned appendix pages (an email
+# thread and an open letter, re-extracted via this project's OCR
+# fallback), where individual characters mid-word are replaced with a
+# handful of stray symbols -- "b~en" for "been", "Ntw\tSttldenrt_y" for
+# "Nicole Studenny" -- rather than whole lines being truncated. Unlike the
+# truncated-line defect, this corruption is scattered unpredictably
+# across otherwise-normal-length lines/blocks, so it needs its own
+# detector: a word containing a letter immediately followed by one of a
+# small set of symbols that never appear glued to a real word in this
+# corpus (~^`\|), then another letter, is almost certainly a real
+# character misread rather than legitimate punctuation.
+_WEIRD_GLUED_SYMBOL_RE = re.compile(r"[A-Za-z][~^`\\|][A-Za-z]")
+
+# A page is only flagged if it has at least this many such words...
+WEIRD_WORD_MIN_COUNT = 5
+# ...spread across at least this many distinct blocks. Requiring more
+# than one block rules out a single garbled word or two inside an
+# otherwise-clean block (e.g. a single OCR misread in one line), which is
+# far more likely to be an isolated glitch than the page-wide corruption
+# this detector targets. Validated against the full corpus: every page
+# matching both thresholds together showed genuine, substantial
+# character-level corruption on manual inspection; no clean page in the
+# corpus matched both.
+WEIRD_WORD_MIN_BLOCKS = 2
+
+
+def count_weird_glued_symbol_words(blocks) -> int:
+    """
+    Count words, across all of the given blocks, that match the
+    glued-symbol character-corruption signature described above.
+    """
+    return sum(
+        1
+        for block in blocks
+        for word in block.text.split()
+        if _WEIRD_GLUED_SYMBOL_RE.search(word)
+    )
+
+
+def count_weird_glued_symbol_blocks(blocks) -> int:
+    """Count how many of the given blocks contain at least one word
+    matching the glued-symbol signature (see count_weird_glued_symbol_words)."""
+    return sum(
+        1
+        for block in blocks
+        if any(_WEIRD_GLUED_SYMBOL_RE.search(word) for word in block.text.split())
+    )
+
+
 def count_garbled_text_layer_blocks(blocks) -> int:
     """
     Count how many of the given blocks match the truncated-line signature
@@ -206,6 +258,8 @@ class PageLayoutStats:
     large_short_block_count: int = 0
     short_block_fraction: float = 0.0  # fraction of blocks <= FRAGMENTED_BLOCK_MAX_AVG_CHARS chars
     garbled_text_layer_block_count: int = 0  # see count_garbled_text_layer_blocks
+    weird_glued_symbol_word_count: int = 0  # see count_weird_glued_symbol_words
+    weird_glued_symbol_block_count: int = 0  # see count_weird_glued_symbol_blocks
 
 
 def is_decorative_layout_page(stats: "PageLayoutStats") -> bool:
@@ -239,20 +293,37 @@ def is_garbled_text_layer_page(stats: "PageLayoutStats") -> bool:
     return stats.garbled_text_layer_block_count >= GARBLED_TEXT_MIN_BLOCK_COUNT
 
 
+def is_character_garbled_page(stats: "PageLayoutStats") -> bool:
+    """True if this page shows the character-level "weird glued symbol"
+    corruption signature (see module notes above count_weird_glued_symbol_words).
+    Distinct from ``is_garbled_text_layer_page`` -- that detector catches
+    whole lines truncated to a handful of characters each; this one
+    catches individual characters replaced by stray symbols scattered
+    through otherwise-normal-length lines. Like the truncated-line
+    defect, this is never eligible for auto-exclusion, since the
+    affected page can carry substantial real (if partially corrupted)
+    content."""
+    return (
+        stats.weird_glued_symbol_word_count >= WEIRD_WORD_MIN_COUNT
+        and stats.weird_glued_symbol_block_count >= WEIRD_WORD_MIN_BLOCKS
+    )
+
+
 def is_safe_to_auto_exclude(stats: "PageLayoutStats") -> bool:
     """True if a decorative-flagged page is also small enough in total
     surviving text that automatically excluding it from output is safe --
     i.e. there isn't enough real content at risk for a false positive to
     matter. See MAX_CHARS_FOR_AUTO_EXCLUDE.
 
-    A page matching the garbled-text-layer signature is NEVER eligible
-    for auto-exclusion, regardless of size: that signature indicates a
-    PDF source defect that can affect pages with substantial real
-    content (e.g. a multi-paragraph appendix letter), unlike a genuine
-    decorative title/cover page. Such pages must always be flagged for
-    manual/OCR review instead of being silently dropped.
+    A page matching the garbled-text-layer signature -- either the
+    truncated-line defect or the character-level "weird glued symbol"
+    defect -- is NEVER eligible for auto-exclusion, regardless of size:
+    both indicate a PDF source defect that can affect pages with
+    substantial real content (e.g. a multi-paragraph appendix letter),
+    unlike a genuine decorative title/cover page. Such pages must always
+    be flagged for manual/OCR review instead of being silently dropped.
     """
-    if is_garbled_text_layer_page(stats):
+    if is_garbled_text_layer_page(stats) or is_character_garbled_page(stats):
         return False
     return stats.total_chars <= MAX_CHARS_FOR_AUTO_EXCLUDE
 
@@ -370,10 +441,25 @@ def evaluate(
                 f"the original document manually"
             )
 
+        char_garbled_pages = [
+            s.page_index for s in page_layout_stats if is_character_garbled_page(s)
+        ]
+        if char_garbled_pages:
+            report.add(
+                f"page(s) {[p + 1 for p in char_garbled_pages]} show signs of "
+                f"character-level corruption (individual letters replaced by "
+                f"stray symbols scattered through otherwise-normal text, e.g. "
+                f"a scanned/OCR'd page with recognition errors) -- consider "
+                f"re-extracting these pages via a higher-quality OCR pass or "
+                f"reviewing the original document manually"
+            )
+
         decorative_pages = [
             s.page_index
             for s in page_layout_stats
-            if is_decorative_layout_page(s) and not is_garbled_text_layer_page(s)
+            if is_decorative_layout_page(s)
+            and not is_garbled_text_layer_page(s)
+            and not is_character_garbled_page(s)
         ]
         if decorative_pages:
             excluded = [

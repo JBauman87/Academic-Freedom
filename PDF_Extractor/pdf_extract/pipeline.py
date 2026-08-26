@@ -227,6 +227,8 @@ def process_document(
             )
             short_fraction = short_count / len(surviving)
             garbled_count = confidence.count_garbled_text_layer_blocks(surviving)
+            weird_word_count = confidence.count_weird_glued_symbol_words(surviving)
+            weird_block_count = confidence.count_weird_glued_symbol_blocks(surviving)
 
             page_layout_stats.append(
                 confidence.PageLayoutStats(
@@ -238,6 +240,8 @@ def process_document(
                     large_short_block_count=large_short_count,
                     short_block_fraction=short_fraction,
                     garbled_text_layer_block_count=garbled_count,
+                    weird_glued_symbol_word_count=weird_word_count,
+                    weird_glued_symbol_block_count=weird_block_count,
                 )
             )
 

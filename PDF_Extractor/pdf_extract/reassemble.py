@@ -49,7 +49,20 @@ from .layout import DocumentLayout, TextBlock
 # columns. Horizontal (row) gaps don't need this safeguard: any gap there
 # already implies non-overlapping vertical extents, which is a reliable
 # signal on its own.
-MIN_VERTICAL_GAP_FRAC = 0.02
+#
+# Calibrated against a real two-column CAUT report page whose actual
+# column gutter was only ~1.98% of the page width -- just under the
+# previous 2% threshold, which caused the split to be rejected and the
+# two columns' blocks to fall through to the (y0, x0) sort-order
+# fallback. That fallback interleaves same-height blocks from both
+# columns by left edge, which visibly tore sentences apart mid-column
+# (a right-column paragraph's continuation got inserted between two
+# unrelated left-column paragraphs). Lowering the threshold to 1.5%
+# catches this real gutter while staying safely above the largest
+# incidental gap observed between blocks that are NOT a real column
+# split in the rest of the corpus (~0.9%, seen only on pages already
+# affected by an unrelated torn/garbled text-layer defect).
+MIN_VERTICAL_GAP_FRAC = 0.015
 
 
 def _merge_intervals(intervals: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
