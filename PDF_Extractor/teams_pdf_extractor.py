@@ -3,11 +3,11 @@ import shutil
 from collections import defaultdict
 
 root = Path(
-    "/Users/jordanbauman/Library/CloudStorage/OneDrive-UniversityofWaterloo/Academic Freedom RA/Code/Academic-Freedom/Case Documents"
+    "/Academic-Freedom/Case Documents"
 )
 
 output = Path(
-    "/Users/jordanbauman/Library/CloudStorage/OneDrive-UniversityofWaterloo/Academic Freedom RA/Code/Academic-Freedom/PDF_Extractor/input_pdfs"
+    "/Academic-Freedom/PDF_Extractor/input_pdfs"
 )
 
 # Counter for each top-level folder
