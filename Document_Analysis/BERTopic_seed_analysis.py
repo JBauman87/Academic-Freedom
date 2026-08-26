@@ -89,7 +89,7 @@ def bertopic(documents: list[str], embeddings:np.ndarray, seed: int, min_cluster
                                umap_model=umap_model,
                                vectorizer_model=vectorizer_model,
                                representation_model=representation_model,
-                               top_n_words=5, #manually adjust
+                               top_n_words=10, #manually adjust
                                calculate_probabilities=False)
 
     # Run the topic model
@@ -476,7 +476,7 @@ if __name__ == "__main__":
     # Import input .txt files
     
     # Source folder
-    folder = Path("""/Users/jordanbauman/Library/CloudStorage/OneDrive-UniversityofWaterloo/Academic Freedom RA/Code/Academic-Freedom/PDF_Extractor/input_pdfs""")
+    folder = Path("""/Users/jordanbauman/Library/CloudStorage/OneDrive-UniversityofWaterloo/Academic Freedom RA/Code/Academic-Freedom/PDF_Extractor/output_text""")
 
     # list holding documents
     DOCUMENTS = []
@@ -508,8 +508,8 @@ if __name__ == "__main__":
         OPTIMIZATION_DF = optimize_parameters(
             DOCUMENTS,
             EMBEDDINGS,
-            min_cluster_sizes=[3, 5, 8],
-            n_neighbors_values=[10, 15],
+            min_cluster_sizes=[8, 12, 16, 20], #CHANGE HERE
+            n_neighbors_values=[10, 15], #CHANGE HERE
             n_components=5,
             seed=42,
         )
@@ -528,7 +528,7 @@ if __name__ == "__main__":
             DOCUMENTS,
             EMBEDDINGS,
             SEEDS,
-            min_cluster_size=3, #CHANGE HERE
+            min_cluster_size=12, #CHANGE HERE
             n_neighbors=10, #CHANGE HERE
             n_components=5 #CHANGE HERE
         )
