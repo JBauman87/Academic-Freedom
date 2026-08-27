@@ -1,0 +1,81 @@
+---
+title: "File Descriptions"
+format: pdf
+editor: visual
+---
+
+* Case Documents
+  
+  *Description*: Contains file folders for each case
+  
+  + Case folders
+    
+    *Description*: Contains all source documents (pdfs) for each case
+  
+* Document_Analysis
+  
+  *Description*: Contain files for analyzing the source documents
+  
+  + BERTopic_seed_analysis.py
+    
+    *Description*: Runs the BERTopic pipeline on the converted source documents (.txt files) 11 times with different random seeds and compares across seed runs, or runs a grid search algorithm for parameter optimization. Outputs an excel sheet with the results of the seed sensitivity analysis or an excel sheet with te results of the gird search algorithm. 
+    
+  + single_BERTopic.py
+    
+    *Description*: Runs the BERTopic pipeline on the converted source documents (.txt files) once and outputs an excel sheet with the results.
+  
+  + parameter_optimization.xlsx
+  
+    *Description*: Contains the output of the grid search parameter optimization algorithm
+    
+  + seed_stability_analysis.xlsx
+  
+    *Description*: Contains the output of the seed sensitivity analysis.
+  
+  + single_BERTopic_results.py
+  
+    *Description*: Contains the output of the single BERTopic pipeline run
+
+* PDF_Extractor
+
+  *Description*: Contains files used to extract .txt files from .pdf files. \*Developed by Kiro using Claude Sonnet 5\*
+  
+  + input_pdfs
+  
+    *Description*: Contains .pdf files to be converted into .txt files. PDFs extracted by [teams_pdf_extractor.py](#teams-pdf) are sent here. 
+    
+  + output_text
+  
+    *Description*: Contains .txt files converted from .pdf files
+  
+  + pdf_extract
+  
+    *Description*: Contains code files that implement the text extraction pipeline
+  
+  + samples
+  
+    *Description*: Contains folders for input/output testing
+    
+  + tests
+  
+    *Description*: Contains tests of the overall pipeline
+    
+  + extract.py 
+  
+    *Description*: Contains code that calls the whole pdf extractor pipeline. Activate the pipeline here.
+    
+  + [teams_pdf_extractor.py]{#teams-pdf}
+  
+    *Description*: extracts the PDFs downloaded from a Teams repository.
+    
+  + README.md
+  
+    *Description*: Contains a description of the PDF extraction pipeline and how to use it.
+    
+  + requirements.txt
+  
+    *Description*: Contains python package installation requirements
+    
+
+    
+

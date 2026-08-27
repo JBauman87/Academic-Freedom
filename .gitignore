@@ -1,0 +1,5 @@
+# sensitive file
+.env
+.env.*
+.DS_Store
+.Rhistory
