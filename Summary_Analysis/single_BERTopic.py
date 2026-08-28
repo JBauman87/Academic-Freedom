@@ -55,6 +55,8 @@ custom_stopwords = {
     "professor",
     "professors",
     "dr",
+    "did",
+    "2018",
     "university",
     "universities",
     "faculty",
