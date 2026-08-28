@@ -30,6 +30,13 @@ print(f"Loaded {len(DOCUMENTS)} documents.")
 # Initialize Models
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
+# Initialize Embeddings
+EMBEDDINGS = embedding_model.encode(
+    DOCUMENTS,
+    show_progress_bar=True,
+    normalize_embeddings=True
+)
+
 # Instantiate clustering model
 hdbscan_model = HDBSCAN(
     min_cluster_size=3, #CHANGE HERE
@@ -184,7 +191,7 @@ vectorizer_model = CountVectorizer(
 )
 
 # Configure the topic model
-topic_model = BERTopic(embedding_model=embedding_model,
+topic_model = BERTopic(embedding_model=None,
                            hdbscan_model=hdbscan_model,
                            umap_model=umap_model,
                            vectorizer_model=vectorizer_model,
@@ -192,10 +199,16 @@ topic_model = BERTopic(embedding_model=embedding_model,
                            top_n_words=10)
 
 # Run the topic model
-topics, probs = topic_model.fit_transform(DOCUMENTS)
+topics, probs = topic_model.fit_transform(
+    DOCUMENTS,
+    EMBEDDINGS
+)
 
 # Visualize Embeddings
-fig = topic_model.visualize_documents(DOCUMENTS)
+fig = topic_model.visualize_documents(
+    DOCUMENTS,
+    embeddings=EMBEDDINGS
+)
 fig.show()
 
 # Retrieve topic modelling results
